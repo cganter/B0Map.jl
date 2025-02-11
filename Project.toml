@@ -1,0 +1,13 @@
+name = "B0Map"
+uuid = "26d27508-09c5-44d0-86be-f4e37b03a7e6"
+authors = ["Carl Ganter <cganter@tum.de>"]
+version = "0.1.0"
+
+[compat]
+julia = "1.6.7"
+
+[extras]
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+
+[targets]
+test = ["Test"]
