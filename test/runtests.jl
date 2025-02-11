@@ -1,6 +1,14 @@
-using B0Map
 using Test
 
-@testset "B0Map.jl" begin
-    # Write your tests here.
-end
+@testset "GREMultiEchoWFFW.jl" begin
+    include("test_GREMultiEchoWFFW.jl")
+end;
+
+@testset "GREMultiEchoWFRW.jl" begin
+    include("test_GREMultiEchoWFRW.jl")
+end;
+
+@testset "GREMultiEchoWF.jl" begin
+    include("test_GREMultiEchoWF.jl")
+end;
+

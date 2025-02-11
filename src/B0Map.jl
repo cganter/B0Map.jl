@@ -1,5 +1,9 @@
 module B0Map
-
-# Write your package code here.
-
+# tissue VARPRO models for multi-echo GRE sequences
+include("GREMultiEcho.jl")
+include("GREMultiEchoWFFW.jl")
+include("GREMultiEchoWFRW.jl")
+include("GREMultiEchoWF.jl")
+# search for best local fit
+include("LocalFit.jl")
 end

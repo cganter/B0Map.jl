@@ -3,7 +3,35 @@ uuid = "26d27508-09c5-44d0-86be-f4e37b03a7e6"
 authors = ["Carl Ganter <cganter@tum.de>"]
 version = "0.1.0"
 
+[deps]
+ChunkSplitters = "ae650224-84b6-46f8-82ea-d812ca08434e"
+Combinatorics = "861a8166-3701-5b0c-9a16-15d98fcdc6aa"
+Compat = "34da2185-b29b-5c13-b0c7-acf172513d20"
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+MAT = "23992714-dd62-5051-b70f-ba57cb901cac"
+Optim = "429524aa-4258-5aef-a3af-852621145aeb"
+Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
+Random = "9a3f8284-a2c9-5f02-9a11-845980a1fd5c"
+Revise = "295af30f-e4ad-537b-8983-00126c2a3abe"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
+Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
+Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+VP4Optim = "8687cf0f-8f6d-4dd6-8e27-64e326ab5325"
+
 [compat]
+ChunkSplitters = "3.1.0"
+Combinatorics = "1.0.2"
+Compat = "4.16.0"
+LinearAlgebra = "1.11.0"
+MAT = "0.10.7"
+Optim = "1.11.0"
+Plots = "1.40.9"
+Random = "1.11.0"
+Revise = "3.7.2"
+StaticArrays = "1.9.11"
+Statistics = "1.11.1"
+Test = "1.11.0"
+VP4Optim = "1.0.8"
 julia = "1.6.7"
 
 [extras]
