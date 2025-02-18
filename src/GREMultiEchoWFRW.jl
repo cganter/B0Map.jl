@@ -4,8 +4,9 @@ Real-valued VARPRO for water-fat mixtures
 ==================================================================  
 =#
 
-using LinearAlgebra, StaticArrays, Statistics
+using LinearAlgebra, StaticArrays, Statistics, Compat
 import VP4Optim as VP
+@compat public GREMultiEchoWFRW, greMultiEchoWFRW, fat_fraction, coil_phase
 
 """
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model

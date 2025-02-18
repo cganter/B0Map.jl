@@ -1,7 +1,7 @@
 using StaticArrays, Random, Statistics
 
 import VP4Optim as VP
-import B0Map
+import B0Map as BM
 
 # GRE parameters
 nTE = 6
@@ -64,6 +64,6 @@ for precession in (:counterclockwise, :clockwise)
     A = [j == 1 ? e[i] : ew[i] for i in 1:nTE, j in 1:2]
     data = eiϕ * A * c
 
-    res[precession] = VP.check_model(B0Map.greMultiEchoWFRW, args, x, c, data, what = what, x0 = x0, lx = lx, ux = ux, 
+    res[precession] = VP.check_model(BM.greMultiEchoWFRW, args, x, c, data, what = what, x0 = x0, lx = lx, ux = ux, 
         x_scale = x_scale, visual = visual, rng = rng, Hessian = Hessian)
 end

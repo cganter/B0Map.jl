@@ -1,7 +1,7 @@
 using StaticArrays, Random
 
 import VP4Optim as VP
-import B0Map
+import B0Map as BM
 
 # GRE parameters
 nTE = 6
@@ -63,25 +63,25 @@ for nc in ncs
     for precession in (:counterclockwise, :clockwise)
         res[precession] = Dict()
         # check, whether the fat fraction is calculated correctly
-        gre_mf = B0Map.greMultiEchoWF(args..., precession, :manual_fat)
-        gre_af = B0Map.greMultiEchoWF(args..., precession, :auto_fat)
+        gre_mf = BM.greMultiEchoWF(args..., precession, 1, nothing, :manual_fat)
+        gre_af = BM.greMultiEchoWF(args..., precession, 1)
         VP.x!(gre_mf, x_mf)
         y = vec(VP.A(gre_mf) * transpose(c))
         VP.y!(gre_mf, y)
         VP.y!(gre_af, VP.y(gre_mf))
         VP.x!(gre_af, x_af)
-        res[precession][:calc_fat_fraction] = B0Map.fat_fraction(gre_af)
+        res[precession][:calc_fat_fraction] = BM.fat_fraction(gre_af)
         res[precession][:true_fat_fraction] = x_mf[3]
         res[precession][:calc_c_af] = VP.c(gre_af)
         res[precession][:calc_c_mf] = VP.c(gre_mf)
         res[precession][:true_c] = c
         @test c ≈ VP.c(gre_af) ≈ VP.c(gre_mf)
 
-        res[precession][:check_model] = VP.check_model(B0Map.greMultiEchoWF, (args..., precession, :manual_fat), 
+        res[precession][:check_model] = VP.check_model(BM.greMultiEchoWF, (args..., precession, 1, nothing, :manual_fat), 
             x_mf, c, y, what = what, x0 = x0_mf, lx = lx_mf, ux = ux_mf, x_scale = x_scale_mf, 
             visual = visual, rng = rng, Hessian = Hessian)
 
-        res[precession][:check_model] = VP.check_model(B0Map.greMultiEchoWF, (args..., precession, :auto_fat), 
+        res[precession][:check_model] = VP.check_model(BM.greMultiEchoWF, (args..., precession, 1), 
             x_af, c, y, what = what, x0 = x0_af, lx = lx_af, ux = ux_af, x_scale = x_scale_af,
             visual = visual, rng = rng, Hessian = Hessian)
     end

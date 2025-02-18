@@ -12,3 +12,5 @@ Abstract supertype of multi-echo GRE sequences
 - `T::Union{Float64, ComplexF64}`: acquired data type
 """
 abstract type AbstractGREMultiEcho{Ny,Nx,Nc,T} <: VP.Model{Ny,Nx,Nc,T} end
+
+function getInternal(gre::AbstractGREMultiEcho, data, ϕ, R2s, n_coils=1, cov_mat=nothing) end

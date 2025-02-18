@@ -4,8 +4,9 @@ Constrained VARPRO for water-fat mixtures
 ==================================================================  
 =#
 
-using LinearAlgebra, StaticArrays, Statistics
+using LinearAlgebra, StaticArrays, Statistics, Compat
 import VP4Optim as VP
+@compat public GREMultiEchoWF, greMultiEchoWF, fat_fraction, coil_sensitivities
 
 abstract type FatTrait end
 struct AutoFat <: FatTrait end
@@ -65,7 +66,7 @@ mutable struct GREMultiEchoWF{Ny,Nx,Nc,Nt} <: AbstractGREMultiEcho{Ny,Nx,Nc,Comp
     u::SVector{Nt,ComplexF64}
     ey::SVector{Nc,ComplexF64}
     uy::SVector{Nc,ComplexF64}
-    A::SMatrix{Nt,Nc,ComplexF64}
+    A::SMatrix{Ny,Nc,ComplexF64}
     A_vec::SVector{Nt,ComplexF64}
     tA::SVector{Nt,ComplexF64}
     # auxiliary element, specifically for automatic calculation of fat fraction 
@@ -134,10 +135,9 @@ Constructor
 - `n_coils::Integer`: Number of coil elements (default `== 1`). Note: `n_coils == Nc`
 - `cov_mat::AbstractMatrix`: Coil noise covariance matrix, if available. Default: `Nc` x `Nc` unit matrix
 """
-function greMultiEchoWF(ts, B0, ppm_fat, ampl_fat, precession, mode=:auto_fat; 
-        x_sym=nothing, Δt=nothing, n_coils=1, cov_mat=ones(ComplexF64,1,1))
+function greMultiEchoWF(ts, B0, ppm_fat, ampl_fat, precession, n_coils, cov_mat=nothing, mode=:auto_fat; 
+        x_sym=nothing, Δt=nothing) 
     @assert mode ∈ (:auto_fat, :manual_fat)
-    @assert size(cov_mat) == (n_coils, n_coils)
 
     if x_sym === nothing
         n_var = mode == :auto_fat ? 2 : 3
@@ -161,6 +161,12 @@ Auxiliary routine
 """
 function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, ts, B0, ppm_fat, ampl_fat, 
         precession, x_sym, Δt, mode, cov_mat) where {Ny,Nx,Nc,Nt}
+    if cov_mat === nothing
+        cov_mat = SMatrix{Nc,Nc,ComplexF64}(i == j ? 1.0 : 0.0 for i in 1:Nc, j in 1:Nc)
+    else
+        cov_mat = SMatrix{Nc,Nc,ComplexF64}(cov_mat)
+    end
+    @assert cov_mat' ≈ cov_mat
     @assert precession ∈ (:counterclockwise, :clockwise)
     # automatic or manual definition of fat fraction
     if mode == :auto_fat
@@ -212,7 +218,7 @@ function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, ts, B0, ppm_
     u = SVector{Nt,ComplexF64}(zeros(ComplexF64, Nt))
     ey = SVector{Nc}(zeros(ComplexF64,Nc))
     uy = SVector{Nc}(zeros(ComplexF64,Nc))
-    A = SMatrix{Nt,Nc,ComplexF64}(zeros(ComplexF64, Nt, Nc))
+    A = SMatrix{Ny,Nc,ComplexF64}(zeros(ComplexF64, Ny, Nc))
     A_vec = SVector{Nt,ComplexF64}(zeros(ComplexF64, Nt, 1))
     tA = SVector{Nt,ComplexF64}(zeros(ComplexF64, Nt, 1))
     z2 = z1 = z0 = 0.0

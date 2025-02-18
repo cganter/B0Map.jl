@@ -4,8 +4,9 @@ Unconstrained VARPRO for water-fat mixtures
 ==================================================================  
 =#
 
-using LinearAlgebra, StaticArrays, Statistics
+using LinearAlgebra, StaticArrays, Statistics, Compat
 import VP4Optim as VP
+@compat public GREMultiEchoWFFW, greMultiEchoWFFW, fat_fraction
 
 """
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model

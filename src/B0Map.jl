@@ -5,5 +5,6 @@ include("GREMultiEchoWFFW.jl")
 include("GREMultiEchoWFRW.jl")
 include("GREMultiEchoWF.jl")
 # search for best local fit
+include("FitTools.jl")
 include("LocalFit.jl")
 end
