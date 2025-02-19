@@ -67,7 +67,7 @@ Data structure holding the fit parameters.
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
 ## Remark
-- Use [ϕ_search_intervals](@ref ϕ_search_intervals) to modify `n_ϕ`, since only then `ϕ_rngs` will be set properly.
+- Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) to modify `n_ϕ`, since only then `ϕ_rngs` will be set properly.
 """
 mutable struct FitOpt
     n_ϕ::Int
@@ -88,7 +88,7 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `gre::AbstractGREMultiEcho`: Initialized structure with GRE sequence parameters and signal/tissue model.
 ## Default values
 - `n_ϕ == 3`
-- `ϕ_rngs == ϕ_search_intervals(n_ϕ, gre.ϕ_scale)`
+- `ϕ_rngs == phase_search_intervals(n_ϕ, gre.ϕ_scale)`
 - `R2s_rng == [0.0, 1.0]`
 - `ϕ_acc == 1.e-4`
 - `R2s_acc == 1.e-4`
@@ -99,7 +99,7 @@ Default constructor for [FitOpt](@ref FitOpt)
 """
 function fitOpt(gre::AbstractGREMultiEcho)
     n_ϕ = 3
-    ϕ_rngs = ϕ_search_intervals(gre, n_ϕ)
+    ϕ_rngs = phase_search_intervals(gre, n_ϕ)
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
@@ -109,7 +109,7 @@ function fitOpt(gre::AbstractGREMultiEcho)
 end
 
 """
-    ϕ_search_intervals(n_ϕ, ϕ_scale=1.0)
+    phase_search_intervals(gre, n_ϕ)
 
 Calulates the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 
@@ -119,9 +119,9 @@ Calulates the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 ## Remarks
 - Background: For non-equidistant echo times, the `2π`-periodicity with respect to `ϕ` no longer holds.
 - `gre` contains a field `ϕ_scale == Δt / ΔTE` to define an effective periodicity (or better search range) `ϕ_scale * 2π` via the optional parameter `Δt`. 
-- Should not be called directly. Use [set_num_phase_intervals](@ref set_num_phase_intervals) instead.
+- Should not be called directly. Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) instead.
 """
-function ϕ_search_intervals(gre, n_ϕ)
+function phase_search_intervals(gre, n_ϕ)
     ϕ_period_2 = gre.ϕ_scale * π
 
     Δϕ2 = ϕ_period_2 / n_ϕ
@@ -140,15 +140,15 @@ Sets the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 - `fitopt::FitOpt`: Fit options
 - `n_ϕ`: Number of search intervals
 ## Remarks
-- Resets field `n_ϕ` in `fitopt` and then calls [ϕ_search_intervals](@ref ϕ_search_intervals).
+- Resets field `n_ϕ` in `fitopt` and then calls [`phase_search_intervals`](@ref phase_search_intervals).
 """
 function set_num_phase_intervals(fitpar, fitopt, n_ϕ)
     fitopt.n_ϕ = n_ϕ
-    fitopt.ϕ_rngs = ϕ_search_intervals(fitpar.gre, n_ϕ)
+    fitopt.ϕ_rngs = phase_search_intervals(fitpar.gre, n_ϕ)
 end
 
 """
-    calc_par(fitpar::FitPar{T}, parfun::Function, res::AbstractArray, n_chunks=8Threads.nthreads()) where {T<:AbstractGREMultiEcho}
+    calc_par(fitpar::FitPar{T}, fitopt::FitOpt, parfun::Function, res::AbstractArray) where {T<:AbstractGREMultiEcho}
 
 Extract model specific information and store it in array `res`.
 

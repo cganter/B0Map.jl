@@ -53,13 +53,18 @@ end
 """
     fat_fraction(gre::GREMultiEchoWFRW)
 
-Returns ``|r_f| / (|r_w| + |r_f|)``
+Calculate and return fat fraction ``|r_f| / (|r_w| + |r_f|)``.
 """
 function fat_fraction(gre::GREMultiEchoWFRW)
     (ar_w, ar_f) = abs.(VP.c(gre))
     ar_f / (ar_w + ar_f)
 end
 
+"""
+    coil_phase(gre::GREMultiEchoWFRW)
+
+Return (coil) phase ``\\theta``.
+"""
 function coil_phase(gre::GREMultiEchoWFRW)
     gre.c_phase
 end

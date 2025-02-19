@@ -1,5 +1,7 @@
 # B0Map
 
+*Tools for rapid B0-mapping in quantitative magnetic resonance imaging (qMRI).*
+
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://cganter.github.io/B0Map.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://cganter.github.io/B0Map.jl/dev/)
 [![Build Status](https://github.com/cganter/B0Map.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/cganter/B0Map.jl/actions/workflows/CI.yml?query=branch%3Amain)
@@ -7,7 +9,7 @@
 
 ## Purpose
 
-Mapping the main magnetic field strength $B_0$ is an important and recurrent
+Mapping the main magnetic field strength B0 is an important and recurrent
 task in quantitative magnetic resonance imaging (qMRI). 
 
 This package provides some tools to analyze related multi-echo data from 
