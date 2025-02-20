@@ -73,9 +73,6 @@ greMultiEchoWFFW
 
 ## Specific API
 
-```@docs
-fat_fraction(::GREMultiEchoWFFW)
-```
 !!! note
     The fat fraction is defined as
     ```math

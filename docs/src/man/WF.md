@@ -114,8 +114,9 @@ greMultiEchoWF
     - For ``\Psi \ne \mathrm{I}``, data must be (re)set with `VP.set_data!(gre, data)` instead of `VP.y!(gre, data)`. 
     - The `data` argument must be ordered such that the expression `SMatrix{Nt,Nc}(data)` produces the correct data matrix ``y_{j\gamma}``.
 
+!!! note
+    The fat fraction is simply given by ``f(\omega, R_2^\ast)``.
 
 ```@docs
-fat_fraction(::GREMultiEchoWF)
 coil_sensitivities
 ```

@@ -80,7 +80,12 @@ greMultiEchoWFRW
 
 ## Specific API
 
+!!! note
+    The fat fraction is defined as
+    ```math
+    \frac{\left|r_{f}\right|}{\left|r_w\right| + \left|r_f\right|}
+    ```
+    
 ```@docs
-fat_fraction(::GREMultiEchoWFRW)
 coil_phase
 ```

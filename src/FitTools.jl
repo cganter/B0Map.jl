@@ -5,11 +5,13 @@ using ChunkSplitters, Compat
 Data structure for fitting images.
 
 ## Content
-- Specifics of the GRE acquisition and signal/tissue model
-- Mask to specify ROI
-- Arrays for the fitted internal parameters `ϕ` and `R2s`
-- Arrays for the resulting linear coil-dependent coefficients `c(ϕ, R2s)`
-- Goodness of fit
+- `gre::AbstractGREMultiEcho`: Specifics of the GRE acquisition and signal/tissue model
+- `data::Array`: Complex data
+- `S::Array`: Mask to specify ROI
+- `ϕ::Array`: Phase ``\\phi = \\omega \\cdot \\Delta t`` (fit parameter)
+- `R2s::Array`: Relaxation rate ``R_2^\\ast`` (fit parameter)
+- `c::Array`: Array of linear VARPRO coefficient vectors ``\\bm{c}(\\phi, R_2^\\ast)``
+- `χ2::Array`: Least squares residual ``\\chi^2``
 ## Scope
 - Local and non-local (regularized) fitting
 """
@@ -34,7 +36,7 @@ Constructor for [FitPar](@ref FitPar)
 - `S::AbstractArray`: Mask to specify ROI.
 ## Remarks
 - `size(S)` defines size and spatial dimensions (typically 2 or 3) of the data block.
-- Mandatory: `size(data)[ndims(S)] == size(S)`
+- Mandatory: `size(data)[1:ndims(S)] == size(S)`
 - The format of `data` must be such that `VP4Optim.setdata!(gre, reshape(data, size(S)..., :)[ci,:])` works for any `ci ∈ CartesianIndices(S)`
 - For single-coil images, this means `ndims(data) == ndims(S) + 1` with the last index enumerating the echoes.
 - For multi-coil data, we typically have `ndims(data) == ndims(S) + 2` with the last but one index enumerating echo times and the last index enumerating the coils.
@@ -80,12 +82,12 @@ mutable struct FitOpt
 end
 
 """
-    fitOpt(gre::AbstractGREMultiEcho)
+    fitOpt(fitpar::FitPar)
 
 Default constructor for [FitOpt](@ref FitOpt)
 
 ## Arguments
-- `gre::AbstractGREMultiEcho`: Initialized structure with GRE sequence parameters and signal/tissue model.
+- `fitpar::FitPar`: Initialized `FitPar` instance
 ## Default values
 - `n_ϕ == 3`
 - `ϕ_rngs == phase_search_intervals(n_ϕ, gre.ϕ_scale)`
@@ -94,12 +96,10 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `R2s_acc == 1.e-4`
 - `optim == true`
 - `n_chunks == 8Threads.nthreads()`
-## Remarks
-- `gre` is only needed, if `Δt != ΔTE` (to define an effective bandwidth in case of non-equidistant echo times)
 """
-function fitOpt(gre::AbstractGREMultiEcho)
+function fitOpt(fitpar::FitPar)
     n_ϕ = 3
-    ϕ_rngs = phase_search_intervals(gre, n_ϕ)
+    ϕ_rngs = phase_search_intervals(fitpar.gre, n_ϕ)
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
@@ -119,9 +119,12 @@ Calulates the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 ## Remarks
 - Background: For non-equidistant echo times, the `2π`-periodicity with respect to `ϕ` no longer holds.
 - `gre` contains a field `ϕ_scale == Δt / ΔTE` to define an effective periodicity (or better search range) `ϕ_scale * 2π` via the optional parameter `Δt`. 
+- Returns empty vector `Any[]`, if `n_ϕ == 0`
 - Should not be called directly. Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) instead.
 """
 function phase_search_intervals(gre, n_ϕ)
+    n_ϕ == 0 && return []
+
     ϕ_period_2 = gre.ϕ_scale * π
 
     Δϕ2 = ϕ_period_2 / n_ϕ

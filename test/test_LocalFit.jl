@@ -63,7 +63,7 @@ fitparRW = BM.fitPar(greRW, data, S)
 fitparFW = BM.fitPar(greFW, data, S)
 
 # fit options
-fitopt = BM.fitOpt(greRW)
+fitopt = BM.fitOpt(fitpar)
 fitopt.optim = false
 #fitopt.R2s_rng = [0.0, 0.0]
 fitopt.ϕ_acc = 1e-6

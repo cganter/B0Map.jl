@@ -13,4 +13,12 @@ Abstract supertype of multi-echo GRE sequences
 """
 abstract type AbstractGREMultiEcho{Ny,Nx,Nc,T} <: VP.Model{Ny,Nx,Nc,T} end
 
-function getInternal(gre::AbstractGREMultiEcho, data, ϕ, R2s, n_coils=1, cov_mat=nothing) end
+"""
+    fat_fraction(::AbstractGREMultiEcho)
+
+Calculate and return the fat fraction.
+
+## Remark
+- The precise implementation depends on the concrete subtype of `AbstractGREMultiEcho`.
+"""
+function fat_fraction(::AbstractGREMultiEcho) end

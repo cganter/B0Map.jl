@@ -15,6 +15,7 @@ makedocs(;
     pages=[
         "Home" => "index.md",
         "Multi-echo GRE signal models" => Any[
+            "General" => "man/GREgeneral.md",
             "Unconstrained water-fat mixture" => "man/WFFW.md",
             "Real-valued water fat mixture" => "man/WFRW.md",
             "Constrained water-fat mixture" => "man/WF.md",

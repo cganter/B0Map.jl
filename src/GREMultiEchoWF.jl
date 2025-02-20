@@ -95,12 +95,12 @@ end
 """
     coil_sensitivities(gre::GREMultiEchoWF)
 
-Calculates and returns the coil sensitivities.
+Calculate and return the coil sensitivities.
 
 ## Remarks
-- If the coil noise covariance matrix ``\\Psi`` differs from the unit matrix, the routine 
-    `VP4Optim.c` does *not* return the actual coil sensitivities.
-- Otherwise it does.
+- If the coil noise covariance matrix ``\\Psi`` differs from the unit matrix ``\\mathrm{I}``, the linear VARPRO coefficients, returned by the routine 
+    `VP4Optim.c`, are *not* equal to the actual coil sensitivities.
+- Otherwise they are.
 """
 function coil_sensitivities(gre::GREMultiEchoWF)
     gre.U * (sqrt.(gre.σ) .* VP.c(gre))
