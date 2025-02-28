@@ -36,10 +36,12 @@ All (concrete) multi-echo GRE types must be subtypes of
 
 ```@docs
 AbstractGREMultiEcho
+make(::Type{<: GREMultiEchoWF}, ::Any) 
 ```
 
 ## Generic Routines
 
 ```@docs
+Δt
 fat_fraction(::AbstractGREMultiEcho)
 ```

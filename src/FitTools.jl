@@ -6,6 +6,7 @@ Data structure for fitting images.
 
 ## Content
 - `gre::AbstractGREMultiEcho`: Specifics of the GRE acquisition and signal/tissue model
+- `args::Tuple`: Arguments used to construct `gre` (not including keyword arguments)
 - `data::Array`: Complex data
 - `S::Array`: Mask to specify ROI
 - `ϕ::Array`: Phase ``\\phi = \\omega \\cdot \\Delta t`` (fit parameter)
@@ -17,6 +18,7 @@ Data structure for fitting images.
 """
 struct FitPar{T<:AbstractGREMultiEcho}
     gre::T
+    args::Tuple
     data::Array
     S::Array
     ϕ::Array
@@ -59,13 +61,16 @@ end
 """
 Data structure holding the fit parameters.
 
-## Local Fit
+## Local Fit and PHASER
 - `n_ϕ::Int`: number of golden section search (GSS) intervals for the initial phase search (with `R2s == 0`).
 - `ϕ_rngs::Array`: GSS intervals, associated with `n_ϕ`.
 - `R2s_rng::Array`: Search range for `R2s`.
 - `ϕ_acc::Float64`: Required GSS accuracy for `ϕ_acc`
 - `R2s_acc::Float64`: Required GSS accuracy for `R2s_acc`
+## Local Fit only
 - `optim::Bool`: Non-linear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
+## PHASER only
+- `λ_tikh::Float`: (Small) Tikhonov regularization parameter
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
 ## Remark
@@ -78,6 +83,7 @@ mutable struct FitOpt
     ϕ_acc::Float64
     R2s_acc::Float64
     optim::Bool
+    λ_tikh::Float64
     n_chunks::Int
 end
 
@@ -95,6 +101,7 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `ϕ_acc == 1.e-4`
 - `R2s_acc == 1.e-4`
 - `optim == true`
+- `λ_tikh == 1.e-6`
 - `n_chunks == 8Threads.nthreads()`
 """
 function fitOpt(fitpar::FitPar)
@@ -104,8 +111,9 @@ function fitOpt(fitpar::FitPar)
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
     optim = true
+    λ_tikh = 1.e-6
     n_chunks = 8Threads.nthreads()
-    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, n_chunks)
+    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, λ_tikh, n_chunks)
 end
 
 """
@@ -207,4 +215,38 @@ function calc_par_chunk(gre::AbstractGREMultiEcho, fitpar::FitPar, parfun::Funct
         # calculate parameter
         res[ci] = parfun(gre)
     end
+end
+
+"""
+    fat_fraction_map(fitpar, fitopt)
+
+Return the fat fraction map.
+
+## Arguments
+- `fitpar::FitPar`: Fit parameters
+- `fitopt::FitOpt`: Fit options
+## Remarks
+- `size(returned map) == size(fitpar.S)`
+- Avoids the necessity to allocate space.
+- Relies on [`calc_par`](@ref calc_par).
+"""
+function fat_fraction_map(fitpar, fitopt)
+    ff = zeros(size(fitpar.S))
+    calc_par(fitpar, fitopt, fat_fraction, ff)
+    return ff
+end
+
+"""
+    freq_map(fitpar)
+
+Return the frequency map [Hz].
+
+## Arguments
+- `fitpar::FitPar`: Fit parameters
+## Remarks
+- `size(returned map) == size(fitpar.S)`
+- Simply rescales the phase map `fitpar.ϕ` instead of calling [`calc_par`](@ref calc_par).
+"""
+function freq_map(fitpar)
+    (1000.0 / (2π * Δt(fitpar.gre))) * fitpar.ϕ
 end

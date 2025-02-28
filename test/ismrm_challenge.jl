@@ -1,15 +1,17 @@
-using MAT, Plots
+using MAT, Plots, PlotThemes, Profile, PProf, BenchmarkTools, LinearAlgebra
+import Phaser as Ph
 import VP4Optim as VP
 import VP4MRI as MR
 
+theme(:dark, color = :batlow)
+BLAS.set_num_threads(1)
+
 function ismrm_challenge(data_set=[];
-    ic_dir="test/ISMRM_challenge_2012/",
-    n_ϕ=3,
+    ic_dir="/home/cganter/ISMRM_challenge/",
+    K,
     n_chunks=8Threads.nthreads(),
-    optim=true,
-    visual=true,
-    fmt=".pdf",
-    R2s_rng=(0.0, 1.0))
+    os_fak=2,
+    n_ϕ=4)
 
     data_set == [] && (data_set = 1:17)
     @assert all(i -> 1 <= i <= 17, data_set)
@@ -21,9 +23,6 @@ function ismrm_challenge(data_set=[];
     res = Dict()
 
     for nmbr in data_set
-        set_str = nmbr < 10 ? "0" * string(nmbr) : string(nmbr)
-
-        println("Set ", nmbr)
         nmb_str = nmbr < 10 ? string("0", nmbr) : string(nmbr)
         file_str = ic_dir * nmb_str * "_ISMRM.mat"
 
@@ -33,36 +32,40 @@ function ismrm_challenge(data_set=[];
         d = matread(file_str)["imDataParams"]
         n_slices = size(d["images"], 3)
         TEs = 1000.0 * d["TE"][:]
-        #TEs = 1000.0 * d["TE"][1:2]
         nTE = length(TEs)
         B0 = d["FieldStrength"]
         precession = (d["PrecessionIsClockwise"] != 1.0) ? :clockwise : :counterclockwise
         args = (TEs, B0, ppm_fat, ampl_fat, precession)
         res[nmbr]["args"] = args
-        res[nmbr]["gre_af"] = MR.greMultiEchoWF(args...)
-        res[nmbr]["gre_mf"] = MR.greMultiEchoWF(args..., :manual_fat)
-        #res[nmbr]["gre_fw"] = MR.greMultiEchoWFFW(args...)
-        res[nmbr]["gre_fw"] = MR.greMultiEchoWFRW(args...)
+        res[nmbr]["gre"] = MR.greMultiEchoWF(args...)
 
         Nρ = size(d["images"])[1:3]
         data = zeros(ComplexF64, Nρ..., nTE)
-        copy!(data, reshape(d["images"][:, :, :, 1, 1:nTE], Nρ..., nTE))
+        copy!(data, reshape(d["images"][:, :, :, 1, :], Nρ..., nTE))
         data ./= max(abs.(data)...)
         res[nmbr]["data"] = data
         S = d["eval_mask"] .!= 0.0
+        sz = size(S)
         res[nmbr]["S"] = S
 
-        pdff_af = zeros(size(S)...)
-        pdff_fw = zeros(size(S)...)
+        pdff_ML = zeros(sz)
+        pdff_phaser = zeros(sz)
         pdff_ref = d["ref"]
-        ϕ_af = zeros(size(S)...)
-        ϕ_fw = zeros(size(S)...)
-        R2s_af = zeros(size(S)...)
-        R2s_fw = zeros(size(S)...)
-        c_af = zeros(ComplexF64, size(S)...)
-        c_fw = zeros(ComplexF64, size(S)..., 2)
-        χ2_af = zeros(size(S)...)
-        χ2_fw = zeros(size(S)...)
+        ϕ_ML = zeros(sz)
+        ϕ_0 = zeros(sz)
+        ϕ_1 = zeros(sz)
+        ϕ_2 = zeros(sz)
+        ϕ_phaser = zeros(sz)
+        Δϕ_0 = zeros(sz)
+        Δϕ_1 = zeros(sz)
+        Δϕ_2 = zeros(sz)
+        R2s_ML = zeros(sz)
+        c_ML = zeros(ComplexF64, sz)
+        χ2_ML = zeros(sz)
+        λs = []
+        χ2s = []
+        lz = zeros(ComplexF64, sz)
+        ly = [zeros(ComplexF64, sz) for _ in 1:2]
 
         v_S = []
         v_ciS = []
@@ -72,139 +75,211 @@ function ismrm_challenge(data_set=[];
         end
 
         @time begin
-            res_af = res[nmbr]["res_af"] = MR.B0_map_varpro(
-                MR.greMultiEchoWF, args, data, S; n_ϕ=n_ϕ, n_chunks=n_chunks, optim=optim, R2s_rng=R2s_rng)
-            #res_fw = res[nmbr]["res_fw"] = MR.B0_map_varpro(
-            #    MR.greMultiEchoWFFW, args, data, S; n_ϕ=n_ϕ, n_chunks=n_chunks)
-            res_fw = res[nmbr]["res_fw"] = MR.B0_map_varpro(
-                MR.greMultiEchoWFRW, args, data, S; n_ϕ=n_ϕ, n_chunks=n_chunks, optim=optim, R2s_rng=R2s_rng)
+            Nρ_ = Nρ[1:2]
+            res[nmbr]["Phaser"] = Vector{Ph.PurePhaserResults}(undef, n_slices)
+            bf = Ph.BFourierLin(Nρ_, K; os_fac=os_fak)
+            res[nmbr]["bf"] = bf
+            for i in 1:n_slices
+                println("slice ", i, "/", n_slices)
 
-            ϕ_af[S] = @views res_af.ϕ[S]
-            ϕ_fw[S] = @views res_fw.ϕ[S]
+                S_ = v_S[i]
+                ciS_ = v_ciS[i]
 
-            R2s_af[S] = @views res_af.R2s[S]
-            R2s_fw[S] = @views res_fw.R2s[S]
+                data_ = @views reshape(data[:, :, i, :], Nρ_..., nTE)
+                res[nmbr]["Phaser"][i] = Ph.phaser(MR.greMultiEchoWF, args, data_, S_, bf, n_ϕ=n_ϕ, n_chunks=n_chunks)
+                #pdff_ML[ciS_, i] = res[nmbr]["Phaser"][i].f_ML[S_]
+                #pdff_phaser[ciS_, i] = res[nmbr]["Phaser"][i].f_phaser[S_]
+                ϕ_ML[ciS_, i] = res[nmbr]["Phaser"][i].ϕ_ML[S_]
+                ϕ_0[ciS_, i] = res[nmbr]["Phaser"][i].ϕ_0[S_]
+                ϕ_1[ciS_, i] = res[nmbr]["Phaser"][i].ϕ_1[S_]
+                ϕ_2[ciS_, i] = res[nmbr]["Phaser"][i].ϕ_2[S_]
+                ϕ_phaser[ciS_, i] = res[nmbr]["Phaser"][i].ϕ_phaser[S_]
+                Δϕ_0[ciS_, i] = res[nmbr]["Phaser"][i].Δϕ_0[S_]
+                Δϕ_1[ciS_, i] = res[nmbr]["Phaser"][i].Δϕ_1[S_]
+                Δϕ_2[ciS_, i] = res[nmbr]["Phaser"][i].Δϕ_2[S_]
+                #R2s_ML[ciS_, i] = res[nmbr]["Phaser"][i].R2s_ML[S_]
+                #c_ML[ciS_, i] = res[nmbr]["Phaser"][i].c_ML[S_]
+                χ2_ML[ciS_, i] = res[nmbr]["Phaser"][i].χ2_ML[S_]
+                push!(λs, res[nmbr]["Phaser"][i].λs)
+                push!(χ2s, res[nmbr]["Phaser"][i].χ2s)
+                lz[ciS_, i] = res[nmbr]["Phaser"][i].lz[S_]
+                for j in 1:2
+                    ly[j][ciS_, i] = @views res[nmbr]["Phaser"][i].ly[j][S_]
+                end
+            end
 
-            pdff_af[S] = @views res_af.f[S]
-            pdff_fw[S] = @views res_fw.f[S]
-
-            c_af[S] = @views res_af.c[S]
-            c_fw[S, :] = @views res_fw.c[S, :]
-
-            χ2_af[S] = @views res_af.χ2[S]
-            χ2_fw[S] = @views res_fw.χ2[S]
-
-            res[nmbr]["pdff_af"] = pdff_af
-            res[nmbr]["pdff_fw"] = pdff_fw
+            res[nmbr]["pdff_ML"] = pdff_ML
+            res[nmbr]["pdff_phaser"] = pdff_phaser
             res[nmbr]["pdff_ref"] = pdff_ref
 
             pdff_ref[(!).(S)] .= 0
-            succ_af = sum(abs.(pdff_af[S] - pdff_ref[S]) .< 0.1)
-            fail_af = sum(S) - succ_af
-            succ_fw = sum(abs.(pdff_fw[S] - pdff_ref[S]) .< 0.1)
-            fail_fw = sum(S) - succ_fw
+            
+            #succ_ML = sum(abs.(pdff_ML[S] - pdff_ref[S]) .< 0.1)
+            #fail_ML = sum(S) - succ_ML
+            #succ_phaser = sum(abs.(pdff_phaser[S] - pdff_ref[S]) .< 0.1)
+            #fail_phaser = sum(S) - succ_phaser
 
-            if visual
-                subplt_size = (480, 330)
+            subplt_size_22 = (510, 320)
+            subplt_size_23 = (510, 320)
+            subplt_size_34 = (340, 280)
 
-                plts_mat_32 = Matrix(undef, 2, 3)
-                plts_mat_12 = Matrix(undef, 2, 1)
+            plts_mat_22 = Matrix(undef, 2, 2)
+            plts_mat_23 = Matrix(undef, 2, 3)
+            plts_mat_34 = Matrix(undef, 3, 4)
+            plts_mat_24 = Matrix(undef, 2, 4)
 
-                for i in 1:n_slices
-                    slice_str = i < 10 ? "0" * string(i) : string(i)
+            for i in 1:n_slices
+                ciS_ = v_ciS[i]
+                #pdff_ML_ = @views pdff_ML[:, :, i]
+                #pdff_phaser_ = @views pdff_phaser[:, :, i]
+                #pdff_ref_ = @views pdff_ref[:, :, i]
+                ϕ_ML_ = @views ϕ_ML[:, :, i]
+                ϕ_0_ = @views ϕ_0[:, :, i]
+                ϕ_1_ = @views ϕ_1[:, :, i]
+                ϕ_2_ = @views ϕ_2[:, :, i]
+                ϕ_phaser_ = @views ϕ_phaser[:, :, i]
+                Δϕ_0_ = @views Δϕ_0[:, :, i]
+                Δϕ_1_ = @views Δϕ_1[:, :, i]
+                Δϕ_2_ = @views Δϕ_2[:, :, i]
+                #R2s_ML_ = @views R2s_ML[:, :, i]
+                #c_ML_ = @views c_ML[:, :, i]
+                #χ2_ML_ = @views χ2_ML[:, :, i]
+                #lz_ = @views lz[:, :, i]
+                #ly_ = @views [_ly[:, :, i] for _ly in ly]
+                #λs_ = λs[i]
+                #χ2s_ = χ2s[i]
 
-                    ciS_ = v_ciS[i]
-                    pdff_af_ = @views reverse(pdff_af[:, :, i], dims=(1,))
-                    pdff_fw_ = @views reverse(pdff_fw[:, :, i], dims=(1,))
-                    pdff_ref_ = @views reverse(pdff_ref[:, :, i], dims=(1,))
-                    ϕ_af_ = @views reverse(ϕ_af[:, :, i], dims=(1,))
-                    ϕ_fw_ = @views reverse(ϕ_fw[:, :, i], dims=(1,))
-                    R2s_af_ = @views reverse(R2s_af[:, :, i], dims=(1,))
-                    R2s_fw_ = @views reverse(R2s_fw[:, :, i], dims=(1,))
-                    abs_c_af_ = @views reverse(abs.(c_af[:, :, i]), dims=(1,))
-                    angle_c_af_ = @views reverse(angle.(c_af[:, :, i]), dims=(1,))
-                    abs_cw_fw_ = @views reverse(abs.(c_fw[:, :, i, 1]), dims=(1,))
-                    angle_cw_fw_ = @views reverse(angle.(c_fw[:, :, i, 1]), dims=(1,))
-                    abs_cf_fw_ = @views reverse(abs.(c_fw[:, :, i, 2]), dims=(1,))
-                    angle_cf_fw_ = @views reverse(angle.(c_fw[:, :, i, 2]), dims=(1,))
-                    χ2_af_ = @views reverse(χ2_af[:, :, i], dims=(1,))
-                    χ2_fw_ = @views reverse(χ2_fw[:, :, i], dims=(1,))
+                #=
+                plts_mat_23[1, 1] = @views heatmap(pdff_ML_, title="pdff: ML")
+                plts_mat_23[1, 2] = @views heatmap(pdff_ref_, title="pdff: REF")
+                iλ = sortperm(λs_)
+                plts_mat_23[1, 2] = scatter(λs_[iλ], χ2s_[iλ]./max(χ2s_...), mc=:red, label="", ms=3)
+                plts_mat_23[1, 3] = @views heatmap(pdff_phaser_, title="pdff: OPT")
+                plts_mat_23[2, 1] = plot()
+                plts_mat_23[2, 2] = plot()
+                plts_mat_23[2, 3] = plot()
+                
+                display(plot(plts_mat_23...,
+                    layout= (3, 2),
+                    size= (2, 3) .* subplt_size_23, plot_title=string("data set ", nmbr, ", slice ", i)))
+                =#
 
-                    Δpdff_fw = @views pdff_fw_[ciS_] - pdff_ref_[ciS_]
-                    Δpdff_af = @views pdff_af_[ciS_] - pdff_ref_[ciS_]
-                    mi, ma = min(Δpdff_fw..., Δpdff_af...), max(Δpdff_fw..., Δpdff_af...)
-                    bins = range(mi, ma, 100)
+                #plts_mat_34[1, 1] = @views heatmap(ϕ_ML_, title="ϕ_ML", showaxis=false)
+                mi = min(ϕ_0_[ciS_]..., ϕ_2_[ciS_]..., ϕ_2_[ciS_]...)
+                ma = max(ϕ_0_[ciS_]..., ϕ_2_[ciS_]..., ϕ_2_[ciS_]...)
+                cls = (mi, ma)
+                @show cls ./ π
+                plts_mat_34[1, 1] = @views heatmap(ϕ_0_, title="ϕ_0", showaxis=false, clims=cls)
+                plts_mat_34[2, 1] = @views heatmap(Δϕ_0_, title="Δϕ_0", showaxis=false)
+                plts_mat_34[3, 1] = @views histogram(Δϕ_0_[ciS_], title="Δϕ_0", lc = :red)
+                plts_mat_34[1, 2] = @views heatmap(ϕ_1_, title="ϕ_1", showaxis=false, clims=cls)
+                plts_mat_34[2, 2] = @views heatmap(Δϕ_1_, title="Δϕ_1", showaxis=false)
+                plts_mat_34[3, 2] = @views histogram(Δϕ_1_[ciS_], title="Δϕ_1", lc = :red)
+                plts_mat_34[1, 3] = @views heatmap(ϕ_2_, title="ϕ_2", showaxis=false, clims=cls)
+                plts_mat_34[2, 3] = @views heatmap(Δϕ_2_, title="Δϕ_2", showaxis=false)
+                plts_mat_34[3, 3] = @views histogram(Δϕ_2_[ciS_], title="Δϕ_2", lc = :red)
+                plts_mat_34[1, 4] = plot() # @views heatmap(ϕ_3_, title="ϕ_3", showaxis=false, clims=cls)
+                plts_mat_34[2, 4] = plot() #@views heatmap(Δϕ_3_, title="Δϕ_3", showaxis=false)
+                plts_mat_34[3, 4] = plot() #@views histogram(Δϕ_3_[ciS_], title="Δϕ_3", lc = :red)
+                @show median(Δϕ_0_[ciS_])
+                #plts_mat_34[1, 2] = @views heatmap(ϕ_1_, title="ϕ_1", showaxis=false, clims=(-π,π))
+                #plts_mat_34[2, 2] = @views heatmap(Δϕ_1_, title="Δϕ_1", showaxis=false)
+                #plts_mat_34[3, 2] = @views heatmap(ϕ_2_, title="ϕ_2", showaxis=false, clims=(-π,π))
+                #plts_mat_34[1, 3] = @views heatmap(Δϕ_2_, title="Δϕ_2", showaxis=false)
+                #plts_mat_34[2, 3] = @views heatmap(ϕ_3_, title="ϕ_3", showaxis=false)
+                #plts_mat_34[3, 3] = @views heatmap(Δϕ_3_, title="Δϕ_3", showaxis=false)
+                #plts_mat_34[1, 4] = @views heatmap(ϕ_phaser_, title="ϕ_phaser", showaxis=false)
+                #plts_mat_34[2, 4] = @views heatmap(angle.(exp.(im * (ϕ_ML_ - ϕ_phaser_))), title="Δϕ_phaser", showaxis=false)
+                #plts_mat_34[3, 4] = @views heatmap(ϕ_ML_, title="ϕ_ML", showaxis=false)
+                
+                display(plot(plts_mat_34...,
+                    layout= (4, 3),
+                    size= (3, 4) .* subplt_size_34, plot_title=string("data set ", nmbr, ", slice ", i)))
+                
+                #=
+                plts_mat_22[1, 1] = @views heatmap(Δϕ_0_, title="Δϕ_0", showaxis=false)
+                plts_mat_22[2, 1] = @views heatmap(Δϕ_1_, title="Δϕ_1", showaxis=false)
+                plts_mat_22[1, 2] = @views heatmap(Δϕ_2_, title="Δϕ_2", showaxis=false)
+                plts_mat_22[2, 2] = @views heatmap(Δϕ_3_, title="Δϕ_3", showaxis=false)
+                
+                display(plot(plts_mat_22...,
+                    layout= (2, 2),
+                    size= (2, 2) .* subplt_size_22, plot_title=string("data set ", nmbr, ", slice ", i)))
+                plts_mat_23[1, 1] = @views histogram(abs.(lz_[ciS_]), title="lz")
+                plts_mat_23[1, 2] = @views histogram(abs.(ly_[1][ciS_]), title="ly_1")
+                plts_mat_23[1, 3] = @views histogram(abs.(ly_[2][ciS_]), title="ly_2")
+                
+                display(plot(plts_mat_23...,
+                    layout= (3, 2),
+                    size= (2, 3) .* subplt_size_23, plot_title=string("data set ", nmbr, ", slice ", i)))
 
-                    plts_mat_32[1, 1] = @views heatmap(pdff_fw_, title="Free Weights (FW)", clim=(0, 1))
-                    plts_mat_32[2, 1] = @views heatmap(pdff_fw_ - pdff_ref_, title="FW - REF")
-                    plts_mat_32[1, 2] = @views heatmap(pdff_ref_, title="Reference (REF)", clim=(0, 1))
-                    plts_mat_32[2, 2] = @views histogram(pdff_fw_[ciS_] - pdff_ref_[ciS_], bins=bins, la=0, fa=0.5, label="FW", fillcolor=:red)
-                    plts_mat_32[2, 2] = @views stephist!(pdff_af_[ciS_] - pdff_ref_[ciS_], bins=bins, color=:blue, label="ML", title="Deviation from REF")
-                    plts_mat_32[1, 3] = @views heatmap(pdff_af_, title="Maximum Likelihood (ML)", clim=(0, 1))
-                    plts_mat_32[2, 3] = @views heatmap(pdff_af_ - pdff_ref_, title="ML - REF")
+                plts_mat_23[1, 1] = @views heatmap(abs.(lz_), title="lz")
+                plts_mat_23[1, 2] = @views heatmap(abs.(ly_[1]), title="ly_1")
+                plts_mat_23[1, 3] = @views heatmap(abs.(ly_[2]), title="ly_2")
+                
+                display(plot(plts_mat_23...,
+                    layout= (3, 2),
+                    size= (2, 3) .* subplt_size_23, plot_title=string("data set ", nmbr, ", slice ", i)))
+                    =#
+#=
+                mi, ma = min(Δϕ_1_[ciS_]..., Δϕ_2_[ciS_]...), max(Δϕ_1_[ciS_]..., Δϕ_2_[ciS_]...)
+                bins = range(mi, ma, 100)
 
-                    display(plot(plts_mat_32...,
-                        layout=size(plts_mat_32'),
-                        size=size(plts_mat_32) .* subplt_size, plot_title=string("PDFF: ", "data set ", nmbr, ", slice ", i)))
+                calc_clims = plts_mat_32[1, 1].subplots[1].attr[:clims_calculated]
+                #plts_mat_22[2, 1] = @views heatmap(R2s_ML_, title="R2s_ML", clim=(0,0.3))
+                plts_mat_32[2, 1] = @views heatmap(ϕ_0_, title="ϕ_0")
+                #plts_mat_32[1, 2] = @views heatmap(imag.(lz_), title="imag(lz)", clims=(-0.5π, 0.5π))
+                #plts_mat_32[2, 2] = @views histogram(rad2deg.(imag.(lz_))[ciS_], bins=100, title="imag(lz)[S]")
+                plts_mat_32[1, 2] = @views heatmap(ϕ_1_, title="ϕ_1")
+                plts_mat_32[2, 2] = @views heatmap(ϕ_2_, title="ϕ_2")
+                plts_mat_32[3, 1] = @views heatmap(ϕ_phaser_, title="ϕ_phaser")
+                plts_mat_32[2, 3] = @views heatmap(ϕ_phaser_, title="ϕ_phaser")
+                #plts_mat_32[2, 3] = @views heatmap(Δϕ_2_, title="Δϕ_2", clims = (-1,1))
+                #plts_mat_32[1, 3] = @views histogram(Δϕ_0_[ciS_], bins=bins, la=0, fa=0.5, label="Δϕ_0", fillcolor=:red)
+                #plts_mat_32[1, 3] = @views stephist!(Δϕ_1_[ciS_], bins=bins, color=:blue, label="Δϕ_1", title="Δϕx")
+                #plts_mat_32[2, 3] = @views stephist(Δϕ_0_[ciS_], bins=bins, color=:black, label="Δϕ_0", fillcolor=:red)
+                #plts_mat_32[2, 3] = @views stephist!(Δϕ_1_[ciS_], bins=bins, color=:green, label="Δϕ_1", fillcolor=:red)
+                #plts_mat_32[2, 3] = @views stephist!(Δϕ_2_[ciS_], bins=bins, color=:blue, label="Δϕ_2")
+                #plts_mat_32[2, 3] = @views stephist!(Δϕ_phaser_[ciS_], bins=bins, color=:red, label="Δϕ_phaser", title="Δϕx")
+                #plts_mat_32[1, 3] = @views histogram(Δϕ_1_[ciS_], title="Δϕ_1")
+                #plts_mat_32[2, 3] = @views histogram(Δϕ_2_[ciS_], title="Δϕ_2")
+                #plts_mat_22[1, 2] = @views heatmap(abs.(c_ML_), title="abs(c_ML)")
+                #plts_mat_22[2, 2] = @views heatmap(angle.(c_ML_), title="angle(c_ML)")
 
-                    !isempty(fmt) && savefig("pdff_" * set_str * "_" * slice_str * fmt)
-                    !isempty(fmt) && savefig("challenge_" * set_str * "_" * slice_str * "_1" * fmt)
-
-                    plts_mat_32[1, 1] = @views heatmap(ϕ_af_, title="ϕ (ML)")
-                    plts_mat_32[2, 1] = @views heatmap(ϕ_fw_, title="ϕ (FW)")
-
-                    plts_mat_32[1, 2] = @views heatmap(R2s_af_, title="R2s (ML)", clim=(0, 0.15))
-                    plts_mat_32[2, 2] = @views heatmap(R2s_fw_, title="R2s (FW)", clim=(0, 0.15))
-
-                    plts_mat_32[1, 3] = @views heatmap(abs_c_af_, title="abs(c) (ML)")
-                    plts_mat_32[2, 3] = @views heatmap(angle_c_af_, title="angle(c) (ML)")
-
-                    display(plot(plts_mat_32...,
-                        layout=size(plts_mat_32'),
-                        size=size(plts_mat_32) .* subplt_size, plot_title=string("data set ", nmbr, ", slice ", i)))
-
-                    !isempty(fmt) && savefig("phase_" * set_str * "_" * slice_str * fmt)
-                    !isempty(fmt) && savefig("challenge_" * set_str * "_" * slice_str * "_2" * fmt)
-
-                    plts_mat_32[1, 1] = @views heatmap(pdff_fw_ - pdff_ref_, title="FW - REF")
-                    plts_mat_32[2, 1] = @views heatmap(angle_cw_fw_, title="angle(w) (FW)")
-
-                    Δ_angle_wf = angle.(exp.(im * (angle_cw_fw_ .- angle_cf_fw_)))
-                    plts_mat_32[1, 2] = @views heatmap(Δ_angle_wf, title="angle(w - f) (FW)")
-                    plts_mat_32[2, 2] = @views heatmap(angle_cf_fw_, title="angle(f) (FW)")
-
-                    plts_mat_32[1, 3] = @views heatmap(abs_c_af_, title="abs(c) (ML)")
-                    plts_mat_32[2, 3] = @views heatmap(angle_c_af_, title="angle(c) (ML)")
-
-                    display(plot(plts_mat_32...,
-                        layout=size(plts_mat_32'),
-                        size=size(plts_mat_32) .* subplt_size, plot_title=string("data set ", nmbr, ", slice ", i)))
-
-                    !isempty(fmt) && savefig("coeff_" * set_str * "_" * slice_str * fmt)
-                    !isempty(fmt) && savefig("challenge_" * set_str * "_" * slice_str * "_3" * fmt)
-
-                    plts_mat_12[1, 1] = @views heatmap(χ2_af_ - χ2_fw_, clim=(0, 0.01), title="chi2(ML) - chi2(FW)")
-                    plts_mat_12[2, 1] = @views histogram(χ2_af_[ciS_] - χ2_fw_[ciS_], title="chi2(ML) - chi2(FW)")
-
-                    display(plot(plts_mat_12...,
-                        layout=size(plts_mat_12'),
-                        size=size(plts_mat_12) .* subplt_size, plot_title=string("data set ", nmbr, ", slice ", i)))
-
-                    !isempty(fmt) && savefig("chi2_" * set_str * "_" * slice_str * fmt)
-                    !isempty(fmt) && savefig("challenge_" * set_str * "_" * slice_str * "_4" * fmt)
-                end
+                display(plot(plts_mat_32...,
+                    layout=size(plts_mat_32'),
+                    size=size(plts_mat_32) .* subplt_size, plot_title=string("data set ", nmbr, ", slice ", i)))
+=#
             end
             println("======================================")
-            println("Total time spent for dataset ", nmbr, ":")
+            println("Total time spent for dataset: ")
         end
-        score_af = 100 * succ_af / (fail_af + succ_af)
-        score_fw = 100 * succ_fw / (fail_fw + succ_fw)
-        println("auto fat score = ", score_af)
-        println("free weights score = ", score_fw)
-        println("======================================")
+        #score_ML = 100 * succ_ML / (fail_ML + succ_ML)
+        #score_phaser = 100 * succ_phaser / (fail_phaser + succ_phaser)
+        #println("ML: score = ", score_ML, ", (succ, fail) = (", succ_ML, ", ", fail_ML, ")")
+        #println("PHASER: score = ", score_phaser, ", (succ, fail) = (", succ_phaser, ", ", fail_phaser, ")")
+        #println("======================================")
     end
 
     return res
 end
 
-res = ismrm_challenge(1:1; visual=true, n_ϕ=4, fmt="", optim=false, R2s_rng=(0.0, 0.0))
+res = ismrm_challenge([12], K=(10, 10))
+
+# 1: tibia, tra
+# 2: upper body, cor
+# 3: foot, sag
+# 4: knee, sag
+# 5: 2 lower legs, tra
+# 6: 2 lower legs, tra
+# 7: foot, sag
+# 8: thorax, tra (strong gradient)
+# 9: head, cor (strong gradient)
+# 10: hand, cor
+# 11: liver, lung, spleen, tra
+# 12: liver, lung, tra
+# 13: thorax, tra (motion artifacts)
+# 14: head & shoulders, cor
+# 15: breast, tra (strong gradient)
+# 16: torso, sag
+# 17: shoulder, cor

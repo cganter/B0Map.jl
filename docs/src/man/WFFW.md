@@ -60,10 +60,18 @@ the elements in the variable vector ``\bm{x}`` are given by a
 GREMultiEchoWFFW
 ```
 
+## Constructor parameters
+
+The parameters for the constructor are defined in
+```@docs
+ModParWFFW
+```
+It can be set up with [VP4Optim.modpar](https://cganter.github.io/VP4Optim.jl/stable/man/guide/#VP4Optim.modpar).
+
 ## Constructor
 
 ```@docs
-greMultiEchoWFFW
+GREMultiEchoWFFW(::ModParWFFW)
 ```
 
 ## Support for [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/)

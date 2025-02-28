@@ -30,6 +30,7 @@ fitPar
 just as in the following example
 
 ```@julia
+import VP4Optim as VP
 import B0Map as BM
 
 # Define acquisition parameters
@@ -39,14 +40,25 @@ t0 = 0.5                            # first echo time [ms]
 TEs = collect(range(t0, t0 + (nTE-1) * ΔTE, nTE))  # resulting echo times
 B0 = 3.0                            # scanner field strength [T]
 precession = :counterclockwise      # orientation of precession (depends on the scanner)
-num_coils = 6                       # number of coils (if reconstructed separately)
+n_coils = 6                         # number of coils (if reconstructed separately)
+cov_mat = get_cov_mat(...)          # coil covariance matrix (if available)
 
 # Define water-fat tissue model (we only need to specify the fat component)
 ppm_fat = [-3.80, -3.40, -2.60, -1.94, -0.39, 0.60]
 ampl_fat = [0.087, 0.693, 0.128, 0.004, 0.039, 0.048]
 
+# set up model constructor parameters
+pars = VP.modpar(BM.ModParWF;
+    ts = TEs,
+    B0 = B0,
+    ppm_fat = ppm_fat,
+    ampl_fat = ampl_fat,
+    precession = precession,
+    n_coils = n_coils,
+    cov_mat = cov_mat)
+    
 # Create an instance of AbstractGREMultiEcho (here we use the recommended constrained model)
-gre = BM.greMultiEchoWF(TEs, B0, ppm_fat, ampl_fat, precession, num_coils)
+gre = BM.greMultiEchoWF(pars)
 
 # Prepare data and ROI
 # (For the required dimensions, see the docs of the constructor fitPar().)
@@ -99,14 +111,14 @@ phase_search_intervals
 
 See [Local Fitting](@ref) and [PHASER](@ref) for how this can be done.
 
-## Extract further information
+## Extract information
 
-After fitting the data, the results for
-- phase ``\phi := \omega \cdot \Delta t``
-- relaxation rate ``R_2^\ast``
-- linear VARPRO coefficients ``\bm{c}``
-- least-squares residual ``\chi^2``
-are returned in the structure `fitpar::FitPar`, which was supplied to the fit routine.
+!!! note
+    After fitting the data, the estimators returned in the supplied structure `fitpar::FitPar`
+    - `fitpar.ϕ`: phase ``\phi := \omega \cdot \Delta t``
+    - `fitpar.R2s`: relaxation rate ``R_2^\ast``
+    - `fitpar.c`: linear VARPRO coefficients ``\bm{c}`` (note: `eltype(c) <: AbstractVector`)
+    - `fitpar.χ2`: least-squares residual ``\chi^2``
 
 Based upon these estimators, further model-dependent information can be calculated with the routine
 
@@ -123,4 +135,11 @@ The following example shows how this looks like for the fat fraction
 # The fat fraction can now be extracted as follows
 ff = zeros(size(fitpar.S))                          # allocate space for the results
 BM.calc_par(fitpar, fitopt, BM.fat_fraction, ff)    # do the job
+```
+
+For convenience (and partly efficiency) some more direct calls are provided as well:
+
+```@docs
+fat_fraction_map
+freq_map
 ```

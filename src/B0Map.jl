@@ -7,4 +7,7 @@ include("GREMultiEchoWF.jl")
 # search for best local fit
 include("FitTools.jl")
 include("LocalFit.jl")
+# PHASER
+include("phaser.jl")
+include("BFourierLin.jl")
 end

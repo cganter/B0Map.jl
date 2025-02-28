@@ -6,7 +6,62 @@ Unconstrained VARPRO for water-fat mixtures
 
 using LinearAlgebra, StaticArrays, Statistics, Compat
 import VP4Optim as VP
-@compat public GREMultiEchoWFFW, greMultiEchoWFFW, fat_fraction
+@compat public ModParWFFW, check, GREMultiEchoWFFW, fat_fraction
+
+"""
+    ModParWFFW <: VP4Optim.ModPar
+
+Parameters to setup an instance of `GREMultiEchoWF`
+
+## Fields
+- `ts::Vector{Float64}`: Echo times [ms]
+- `B0::Float64`: Field strength [T]
+- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
+- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
+- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
+- `x_sym::Vector{Symbol}`: Variable parameters
+- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
+"""
+struct ModParWFFW <: VP.ModPar
+    ts::Vector{Float64}
+    B0::Float64
+    ppm_fat::Vector{Float64}
+    ampl_fat::Vector{Float64}
+    precession::Symbol
+    x_sym::Vector{Symbol}
+    Δt::Float64
+end
+
+"""
+    ModParWFFW()
+
+Return default instance of `ModParWFFW`
+"""
+function ModParWFFW()
+    ts = Float64[]
+    B0 = 0.0
+    ppm_fat = Float64[]
+    ampl_fat = Float64[]
+    precession = :unknown
+    x_sym = [:ϕ, :R2s]
+    Δt = 0.0
+    
+    ModParWFFW(ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt)
+end
+
+"""
+    VP.check(pars::ModParWFFW)
+
+Throws an exception, if the fields in `pars` are defined inconsistently.
+"""
+function VP.check(pars::ModParWFFW)
+    @assert length(pars.ts) > 1
+    @assert pars.B0 > 0
+    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
+    @assert pars.precession ∈ [:clockwise, :counterclockwise]
+    @assert all(sy -> sy ∈ [:ϕ, :R2s], pars.x_sym)
+    @assert pars.Δt ≥ 0.0
+end
 
 """
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model
@@ -49,66 +104,63 @@ mutable struct GREMultiEchoWFFW{Ny,Nx} <: AbstractGREMultiEcho{Ny,Nx,2,ComplexF6
 end
 
 """
-    greMultiEchoWFFW(ts, B0, ppm_fat, ampl_fat, precession; x_sym=[:ϕ, :R2s], Δt=nothing)
+    GREMultiEchoWFFW(pars::ModParWFFW)
 
 Constructor 
 
 # Arguments 
-- `ts::Vector{Float64}`: Echo times [ms]
-- `B0::Float64`: Main field strength [T]
-- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks
-- `ampl_fat::Vector{Float64}`: relative fat peak amplitudes (all positive with `sum(ampl_fat) ≈ 1`)
-- `precession::Symbol`: Orientation of precession `∈ {:clockwise, :counterclockwise}`
-- `x_sym::Vector{Symbol}`: Vector of variable parameters `∈ {:ϕ, :R2s}`, default: `[:ϕ, :R2s]`
-- `Δt::Union{Float64, Nothing}`: Allows to adjust the frequency bandwidth ``2π/Δt`` in case of 
-    non-equidistant echoes. Default: `Δt` equals the average echo spacing.
+- `pars::ModParWFFW`: Model parameters to instantiate the model. See [ModParWFFW](@ref ModParWFFW).
 """
-function greMultiEchoWFFW(ts, B0, ppm_fat, ampl_fat, precession; x_sym=[:ϕ, :R2s], Δt=nothing)
-    GREMultiEchoWFFW(Val(length(ts)), Val(length(x_sym)), ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt)
+function GREMultiEchoWFFW(pars::ModParWFFW)
+    # before doing anything else: check parameters
+    VP.check(pars)
+
+    # set parametric type parameters
+    Ny, Nx = length(pars.ts), length(pars.x_sym)
+
+    GREMultiEchoWFFW(Val(Ny), Val(Nx), pars)
 end
 
 """
-    GREMultiEchoWFFW(::Val{Ny}, ::Val{Nx}, ts, B0, ppm_fat, ampl_fat, 
-        precession, x_sym, Δt) where {Ny,Nx}
+    GREMultiEchoWFFW(::Val{Ny}, ::Val{Nx}, pars::ModParWFFW)
 
 Auxiliary function
 """
-function GREMultiEchoWFFW(::Val{Ny}, ::Val{Nx}, ts, B0, ppm_fat, ampl_fat, 
-        precession, x_sym, Δt) where {Ny, Nx}
-    @assert precession ∈ (:counterclockwise, :clockwise)
+function GREMultiEchoWFFW(::Val{Ny}, ::Val{Nx}, pars::ModParWFFW) where {Ny, Nx}
     # all parameters in val (variable or not)
     sym = [:ϕ, :R2s]
     n_sym = length(sym)
-    # confirm that all *submitted* variables are known
-    @assert all(sy -> sy ∈ sym, x_sym)
+    x_sym = deepcopy(pars.x_sym)
     # initialize storage and indexing of parameters
     x_ind = SVector{Nx,Int}(findfirst(x -> x == x_sym[i], sym) for i in 1:Nx) # indices of variable parameters
     par_ind = filter(x -> x ∉ x_ind, 1:n_sym)
     par_sym = sym[par_ind]
-    val = zeros(n_sym) # real vector of all parameters (variable and constant)
+    # real vector of all parameters (variable and constant)
+    val = zeros(n_sym) 
     # data
     y = SVector{Ny,ComplexF64}(zeros(ComplexF64, Ny))
     y2 = 0.0
     # initialize mandatory fields
-    ts = SVector{Ny,Float64}(collect(ts))
+    ts = SVector{Ny,Float64}(pars.ts)
     ΔTE = mean(ts[2:end] - ts[1:end-1])
-    if Δt === nothing
+    if pars.Δt == 0.0
         Δt = ΔTE
         ϕ_scale = 1.0
     else
-        @assert Δt isa Real
+        Δt = pars.Δt
         ϕ_scale = Δt / ΔTE
     end
     Δt2 = 1.0 / Δt^2
     iΔt = 1im / Δt
-    fac = im * 2π * 0.042577 * B0
-    precession == :clockwise && (iΔt = - iΔt; fac = - fac)
-    ppm_fat = collect(ppm_fat)
-    ampl_fat = collect(ampl_fat)
+    fac = im * 2π * 0.042577 * pars.B0
+    pars.precession == :clockwise && (iΔt = - iΔt; fac = - fac)
+    ppm_fat = deepcopy(pars.ppm_fat)
+    ampl_fat = deepcopy(pars.ampl_fat)
     ty = SVector{Ny,ComplexF64}(zeros(ComplexF64, Ny))
     w = SVector{Ny,ComplexF64}(sum(ampl_fat' .* exp.(fac * ppm_fat' .* ts), dims=2))
     
-    GREMultiEchoWFFW{Ny,Nx}(sym, x_sym, par_sym, val, x_ind, par_ind, y, y2, ts, B0, precession, ppm_fat, ampl_fat, ΔTE, Δt, ϕ_scale, Δt2, iΔt, ty, w)
+    GREMultiEchoWFFW{Ny,Nx}(sym, x_sym, par_sym, val, x_ind, par_ind, y, y2, ts, pars.B0, 
+        pars.precession, ppm_fat, ampl_fat, ΔTE, Δt, ϕ_scale, Δt2, iΔt, ty, w)
 end
 
 """

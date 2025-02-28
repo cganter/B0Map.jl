@@ -6,11 +6,79 @@ Constrained VARPRO for water-fat mixtures
 
 using LinearAlgebra, StaticArrays, Statistics, Compat
 import VP4Optim as VP
-@compat public GREMultiEchoWF, greMultiEchoWF, fat_fraction, coil_sensitivities
+@compat public ModParWF, check, GREMultiEchoWF, fat_fraction, coil_sensitivities
 
 abstract type FatTrait end
 struct AutoFat <: FatTrait end
 struct ManualFat <: FatTrait end
+
+"""
+    ModParWF <: VP4Optim.ModPar
+
+Parameters to setup an instance of `GREMultiEchoWF`
+
+## Fields
+- `ts::Vector{Float64}`: Echo times [ms]
+- `B0::Float64`: Field strength [T]
+- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
+- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
+- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
+- `n_coils::Int`: Number of coils
+- `cov_mat::Matrix{ComplexF64}`: Coil covariance matrix
+- `mode::Symbol`: Calculate fat (`mode == :auto_fat`) or explicitly set it (`mode == :manual_fat`)
+- `x_sym::Vector{Symbol}`: Variable parameters
+- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
+"""
+struct ModParWF <: VP.ModPar
+    ts::Vector{Float64}
+    B0::Float64
+    ppm_fat::Vector{Float64}
+    ampl_fat::Vector{Float64}
+    precession::Symbol
+    n_coils::Int
+    cov_mat::Matrix{ComplexF64}
+    mode::Symbol
+    x_sym::Vector{Symbol}
+    Δt::Float64
+end
+
+"""
+    ModParWF()
+
+Return default instance of `ModParWF`
+"""
+function ModParWF()
+    ts = Float64[]
+    B0 = 0.0
+    ppm_fat = Float64[]
+    ampl_fat = Float64[]
+    precession = :unknown
+    n_coils = 1
+    cov_mat = ComplexF64[1;;]
+    mode = :auto_fat
+    x_sym = [:ϕ, :R2s]
+    Δt = 0.0
+    
+    ModParWF(ts, B0, ppm_fat, ampl_fat, precession, n_coils, cov_mat, mode, x_sym, Δt)
+end
+
+"""
+    VP.check(pars::ModParWF)
+
+Throws an exception, if the fields in `pars` are defined inconsistently.
+"""
+function VP.check(pars::ModParWF)
+    @assert length(pars.ts) > 1
+    @assert pars.B0 > 0
+    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
+    @assert pars.precession ∈ [:clockwise, :counterclockwise]
+    @assert pars.n_coils == size(pars.cov_mat, 1) == size(pars.cov_mat, 2)
+    @assert pars.cov_mat' ≈ pars.cov_mat
+    @assert pars.mode ∈ [:auto_fat, :manual_fat]
+    sym = pars.mode == :auto_fat ? [:ϕ, :R2s] : [:ϕ, :R2s, :f]
+    @assert all(sy -> sy ∈ sym, pars.x_sym)
+    @assert pars.Δt ≥ 0.0
+end
 
 """
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model
@@ -116,41 +184,22 @@ function fatTrait(gre::GREMultiEchoWF)
 end
 
 """
-    greMultiEchoWF(ts, B0, ppm_fat, ampl_fat, precession, mode=:auto_fat; 
-        x_sym=nothing, Δt=nothing, n_coils=1, cov_mat=ones(ComplexF64,1,1))
+    GREMultiEchoWF(pars::ModParWF)
 
 Constructor 
 
 # Arguments 
-- `ts::Vector{Float64}`: Echo times [ms]
-- `B0::Float64`: Main field strength [T]
-- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks
-- `ampl_fat::Vector{Float64}`: relative fat peak amplitudes (all positive with `sum(ampl_fat) ≈ 1`)
-- `precession::Symbol`: Orientation of precession `∈ {:clockwise, :counterclockwise}`
-- `mode::Symbol`: By default (`mode == :auto_fat`) the fat fraction `f` is calculated automatically.
-    Alternatively (`mode == :manual_fat`), it can also be set manually.
-- `x_sym::Vector{Symbol}`: Vector of variable parameters `∈ {:ϕ, :R2s}`, default: `[:ϕ, :R2s]`
-- `Δt::Union{Float64, Nothing}`: Allows to adjust the frequency bandwidth ``2π/Δt`` in case of 
-    non-equidistant echoes. Default: `Δt` equals the average echo spacing.
-- `n_coils::Integer`: Number of coil elements (default `== 1`). Note: `n_coils == Nc`
-- `cov_mat::AbstractMatrix`: Coil noise covariance matrix, if available. Default: `Nc` x `Nc` unit matrix
+- `pars::ModParWF`: Model parameters to instantiate the model. See [ModParWF](@ref ModParWF).
 """
-function greMultiEchoWF(ts, B0, ppm_fat, ampl_fat, precession, n_coils, cov_mat=nothing, mode=:auto_fat; 
-        x_sym=nothing, Δt=nothing) 
-    @assert mode ∈ (:auto_fat, :manual_fat)
-
-    if x_sym === nothing
-        n_var = mode == :auto_fat ? 2 : 3
-    else
-        n_var = length(x_sym)
-        # automatic calculation of fat fraction is disabled, if it is explicitly defined as variable
-        :f ∈ x_sym && (mode = :manual_fat)
-    end
-
-    Nx, Nc, Nt = n_var, n_coils, length(ts)
+function GREMultiEchoWF(pars::ModParWF)
+    # before doing anything else: check parameters
+    VP.check(pars)
+    
+    # set parametric type parameters
+    Nx, Nc, Nt = length(pars.x_sym), pars.n_coils, length(pars.ts)
     Ny = Nt * Nc
 
-    GREMultiEchoWF(Val(Ny), Val(Nx), Val(Nc), Val(Nt), ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt, mode, cov_mat)
+    GREMultiEchoWF(Val(Ny), Val(Nx), Val(Nc), Val(Nt), pars)
 end
 
 """
@@ -159,17 +208,9 @@ end
 
 Auxiliary routine
 """
-function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, ts, B0, ppm_fat, ampl_fat, 
-        precession, x_sym, Δt, mode, cov_mat) where {Ny,Nx,Nc,Nt}
-    if cov_mat === nothing
-        cov_mat = SMatrix{Nc,Nc,ComplexF64}(i == j ? 1.0 : 0.0 for i in 1:Nc, j in 1:Nc)
-    else
-        cov_mat = SMatrix{Nc,Nc,ComplexF64}(cov_mat)
-    end
-    @assert cov_mat' ≈ cov_mat
-    @assert precession ∈ (:counterclockwise, :clockwise)
+function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, pars::ModParWF) where {Ny,Nx,Nc,Nt}
     # automatic or manual definition of fat fraction
-    if mode == :auto_fat
+    if pars.mode == :auto_fat
         fat_trait = AutoFat()
         # despite being stored in val[3], the fat fraction is treated like a hidden parameter
         # i.e. not accessible via par() or par!()
@@ -179,10 +220,7 @@ function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, ts, B0, ppm_
         sym = [:ϕ, :R2s, :f]
     end
     n_sym = length(sym)
-    # variable parameters; equal to par_sym, if not specified
-    x_sym === nothing && (x_sym = deepcopy(sym))
-    # confirm that all *submitted* variables are known
-    @assert all(sy -> sy ∈ sym, x_sym)
+    x_sym = deepcopy(pars.x_sym)
     # initialize storage and indexing of parameters
     x_ind = SVector{Nx,Int}(findfirst(x -> x == x_sym[i], sym) for i in 1:Nx) # indices of variable parameters
     par_ind = filter(x -> x ∉ x_ind, 1:n_sym)
@@ -194,23 +232,23 @@ function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, ts, B0, ppm_
     y_mat = SMatrix{Nt,Nc,ComplexF64}(zeros(ComplexF64, Nt, Nc))
     y2 = 0.0
     # initialize mandatory fields
-    ts = SVector{Nt,Float64}(collect(ts))
+    ts = SVector{Nt,Float64}(pars.ts)
     ΔTE = mean(ts[2:end] - ts[1:end-1])
-    if Δt === nothing
+    if pars.Δt == 0.0
         Δt = ΔTE
         ϕ_scale = 1.0
     else
-        @assert Δt isa Real
+        Δt = pars.Δt
         ϕ_scale = Δt / ΔTE
     end
     Δt1 = 1 / Δt
     Δt2 = Δt1^2
     iΔt = 1im * Δt1
     s = 1.0
-    fac = im * 2π * 0.042577 * B0
-    precession == :clockwise && (iΔt = -iΔt; fac = -fac; s = -s)
-    ppm_fat = collect(ppm_fat)
-    ampl_fat = collect(ampl_fat)
+    fac = im * 2π * 0.042577 * pars.B0
+    pars.precession == :clockwise && (iΔt = -iΔt; fac = -fac; s = -s)
+    ppm_fat = deepcopy(pars.ppm_fat)
+    ampl_fat = deepcopy(pars.ampl_fat)
     ty = SMatrix{Nt,Nc,ComplexF64}(zeros(ComplexF64, Nt, Nc))
     w = SVector{Nt,ComplexF64}(sum(ampl_fat' .* exp.(fac * ppm_fat' .* ts), dims=2) .- 1)
     wp2 = abs2.(w)
@@ -225,13 +263,13 @@ function GREMultiEchoWF(::Val{Ny}, ::Val{Nx}, ::Val{Nc}, ::Val{Nt}, ts, B0, ppm_
     n2 = n1 = n0 = 0.0
     a2 = a1 = a0 = 0.0
     ε = 0.0
-    cov_mat = SMatrix{Nc,Nc,ComplexF64}(cov_mat)
+    cov_mat = SMatrix{Nc,Nc,ComplexF64}(pars.cov_mat)
     (σ2, U) = eigen(cov_mat)
     σ = sqrt.(σ2)
 
     GREMultiEchoWF{Ny,Nx,Nc,Nt}(fat_trait, sym, x_sym, par_sym, val, x_ind, par_ind, y, y_mat, y2,
-        cov_mat, U, σ2, σ, ts, B0,
-        precession, ppm_fat, ampl_fat, ΔTE, Δt, ϕ_scale, Δt1, Δt2, iΔt, ty, w, wp2,
+        cov_mat, U, σ2, σ, ts, pars.B0,
+        pars.precession, ppm_fat, ampl_fat, ΔTE, Δt, ϕ_scale, Δt1, Δt2, iΔt, ty, w, wp2,
         e, u, ey, uy, A, A_vec, tA, z2, z1, z0, n2, n1, n0, a2, a1, a0, ε, s)
 end
 

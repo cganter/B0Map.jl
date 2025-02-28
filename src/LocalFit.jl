@@ -8,8 +8,8 @@ import VP4Optim as VP
 Fit data to multi-echo GRE model locally.
 
 ## Arguments
-- `fitpar::FitPar`: Fit parameters (see [FitPar](@ref FitPar) and fitPar](@ref fitPar)).
-- `fitopt::FitOpt`: Fit options (see [FitOpt](@ref FitOpt) and fitOpt](@ref fitOpt)).
+- `fitpar::FitPar`: Fit parameters (see [FitPar](@ref FitPar))
+- `fitopt::FitOpt`: Fit options (see [FitOpt](@ref FitOpt))
 ## Remarks
 - Fits `fitpar.data` to all points specified by `fitpar.S`.
 - Makes use of multi-threading. Just start julia with as many workers as you like to use.
