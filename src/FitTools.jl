@@ -17,8 +17,8 @@ Data structure for fitting images.
 - Local and non-local (regularized) fitting
 """
 struct FitPar{T<:AbstractGREMultiEcho}
+    # common part (local fit and PHASER)
     gre::T
-    args::Tuple
     data::Array
     S::Array
     ϕ::Array
@@ -51,10 +51,10 @@ function fitPar(gre::AbstractGREMultiEcho{Ny,Nx,Nc,T}, data::AbstractArray, S::A
         gre,
         data,
         S,
-        zeros(szS),
-        zeros(szS),
+        zeros(szS), # ϕ
+        zeros(szS), # R2s
         c,
-        zeros(szS)
+        zeros(szS), # χ2
     )
 end
 
@@ -78,25 +78,25 @@ Data structure holding the fit parameters.
 """
 mutable struct FitOpt
     n_ϕ::Int
-    ϕ_rngs::Array
-    R2s_rng::Array
+    ϕ_rngs::Vector{Vector{Float64}}
+    R2s_rng::Vector{Float64}
     ϕ_acc::Float64
     R2s_acc::Float64
     optim::Bool
     λ_tikh::Float64
     n_chunks::Int
+    K::Vector{Int}
+    os_fac::Vector{Float64}
 end
 
 """
-    fitOpt(fitpar::FitPar)
+    fitOpt(ϕ_scale = 1.0)
 
 Default constructor for [FitOpt](@ref FitOpt)
 
-## Arguments
-- `fitpar::FitPar`: Initialized `FitPar` instance
 ## Default values
 - `n_ϕ == 3`
-- `ϕ_rngs == phase_search_intervals(n_ϕ, gre.ϕ_scale)`
+- `ϕ_rngs == phase_search_intervals(n_ϕ, ϕ_scale)`
 - `R2s_rng == [0.0, 1.0]`
 - `ϕ_acc == 1.e-4`
 - `R2s_acc == 1.e-4`
@@ -104,41 +104,43 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `λ_tikh == 1.e-6`
 - `n_chunks == 8Threads.nthreads()`
 """
-function fitOpt(fitpar::FitPar)
+function fitOpt(ϕ_scale = 1.0)
     n_ϕ = 3
-    ϕ_rngs = phase_search_intervals(fitpar.gre, n_ϕ)
+    ϕ_rngs = phase_search_intervals(n_ϕ, ϕ_scale)
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
     optim = true
     λ_tikh = 1.e-6
     n_chunks = 8Threads.nthreads()
-    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, λ_tikh, n_chunks)
+    K = []
+    os_fac = [2.0]
+    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, λ_tikh, n_chunks, K, os_fac)
 end
 
 """
-    phase_search_intervals(gre, n_ϕ)
+    phase_search_intervals(n_ϕ, ϕ_scale = 1.0)
 
 Calulates the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 
 ## Arguments
-- `gre::AbstractGREMultiEcho`: Initialized structure with GRE sequence parameters and signal/tissue model.
 - `n_ϕ::Int`: number of golden section search (GSS) intervals
+- `ϕ_scale::Real`: see remarks (default `== 1.0`) 
 ## Remarks
 - Background: For non-equidistant echo times, the `2π`-periodicity with respect to `ϕ` no longer holds.
 - `gre` contains a field `ϕ_scale == Δt / ΔTE` to define an effective periodicity (or better search range) `ϕ_scale * 2π` via the optional parameter `Δt`. 
 - Returns empty vector `Any[]`, if `n_ϕ == 0`
 - Should not be called directly. Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) instead.
 """
-function phase_search_intervals(gre, n_ϕ)
-    n_ϕ == 0 && return []
+function phase_search_intervals(n_ϕ, ϕ_scale = 1.0)
+    n_ϕ == 0 && return Vector{Float64}[]
 
-    ϕ_period_2 = gre.ϕ_scale * π
+    ϕ_period_2 = ϕ_scale * π
 
     Δϕ2 = ϕ_period_2 / n_ϕ
     ϕs = range(-ϕ_period_2 + Δϕ2, ϕ_period_2 - Δϕ2, n_ϕ)
 
-    return [[ϕ_ - Δϕ2, ϕ_ + Δϕ2] for ϕ_ in ϕs]
+    return Vector{Float64}[[ϕ_ - Δϕ2, ϕ_ + Δϕ2] for ϕ_ in ϕs]
 end
 
 """
@@ -155,7 +157,7 @@ Sets the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 """
 function set_num_phase_intervals(fitpar, fitopt, n_ϕ)
     fitopt.n_ϕ = n_ϕ
-    fitopt.ϕ_rngs = phase_search_intervals(fitpar.gre, n_ϕ)
+    fitopt.ϕ_rngs = phase_search_intervals(n_ϕ, fitpar.gre.ϕ_scale)
 end
 
 """
@@ -248,5 +250,5 @@ Return the frequency map [Hz].
 - Simply rescales the phase map `fitpar.ϕ` instead of calling [`calc_par`](@ref calc_par).
 """
 function freq_map(fitpar)
-    (1000.0 / (2π * Δt(fitpar.gre))) * fitpar.ϕ
+    (1000.0 / (2π * Δt(fitpar.gre))) .* fitpar.ϕ
 end

@@ -7,7 +7,7 @@ CurrentModule = B0Map
 ## Smooth basis
 
 ```@docs
-BSmooth
+BSmooth{N}
 BFourierLin
 fourier_lin
 Nρ

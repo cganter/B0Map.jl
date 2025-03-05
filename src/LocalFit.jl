@@ -99,6 +99,7 @@ function local_fit_chunk(gre, fitpar, fitopt, cis_chunk)
         end
 
         # linear coefficients
+        VP.x!(gre, [fitpar.ϕ[ci], fitpar.R2s[ci]])
         fitpar.c[ci] = VP.c(gre)
     end
 end

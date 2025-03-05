@@ -49,9 +49,10 @@ Constructor of combined Fourier & linear basis
 - `K`: max. Fourier component in each direction. (iterable)
 - `os_fac`: Oversampling factor (default == `1.0`), either global (scalar) or direction dependent (scalar or iterable)
 """
-function fourier_lin(Nρ_orig, K; os_fac=1.0)
+function fourier_lin(Nρ_orig, K; os_fac=[1.0])
     @assert all(K .>= 0)
     @assert all(os_fac .>= 1.0)
+    @assert length(os_fac) == 1 || length(os_fac) == length(K)
 
     Nκ = tuple((2 .* K .+ 1)...)
     Nν = length(Nκ)

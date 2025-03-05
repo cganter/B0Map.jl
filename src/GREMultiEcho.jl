@@ -14,18 +14,6 @@ Abstract supertype of multi-echo GRE sequences
 abstract type AbstractGREMultiEcho{Ny,Nx,Nc,T} <: VP.Model{Ny,Nx,Nc,T} end
 
 """
-    make(GRE::Type{<: AbstractGREMultiEcho}, args; x_sym=nothing, Δt=nothing)
-
-Generate a `GRE` instance.
-
-## Arguments
-- `args::Tuple`: Arguments of `GRE` constuctor without keyword arguments
-"""
-function make(GRE::Type{<: AbstractGREMultiEcho}, args; x_sym=nothing, Δt=nothing)
-    make(GRE, args..., x_sym=x_sym, Δt=Δt)
-end
-
-"""
     Δt(gre::T) where T <: AbstractGREMultiEcho
 
 Return the effective echo spacing `Δt`.
