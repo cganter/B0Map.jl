@@ -1,4 +1,4 @@
-using ChunkSplitters, Optim, Compat
+using ChunkSplitters, Optim, TimerOutputs, Compat
 import VP4Optim as VP
 @compat public local_fit, GSS
 
@@ -18,7 +18,7 @@ Fit data to multi-echo GRE model locally.
 - Optionally (`fitopt.optim == true`), for the best GSS estimate `[ϕ, R2s]` is refined with a nonlinear fit.
 - The final estimates `[ϕ, R2s]` are stored in `fitpar`, together with the linear coefficients `VP4Optim.c` and the goodness of fit `VP4Optim.χ2`.
 """
-function local_fit(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
+function local_fit(fitpar::FitPar{T}, fitopt::FitOpt; verbose = false) where {T<:AbstractGREMultiEcho}
     # Cartesian indices of valid data (defined by the mask S)
     cis = CartesianIndices(fitpar.S)[fitpar.S]
     cis_chunks = [view(cis, index_chunks(cis, n=fitopt.n_chunks)[i]) for i in 1:fitopt.n_chunks]
@@ -30,10 +30,10 @@ function local_fit(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMulti
         put!(ch_gre, deepcopy(fitpar.gre))
     end
 
-    println("Local fit ... ")
+    verbose && print("Local fit ... ")
 
     # do the work
-    @time Threads.@threads for cis_chunk in cis_chunks
+    Threads.@threads for cis_chunk in cis_chunks
         # take free models
         gre = take!(ch_gre)
 
@@ -44,7 +44,7 @@ function local_fit(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMulti
         put!(ch_gre, gre)
     end
 
-    println("done.")
+    verbose && println("done.")
 
     # close channel
     close(ch_gre)

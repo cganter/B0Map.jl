@@ -1,4 +1,4 @@
-using ChunkSplitters, Compat
+using ChunkSplitters, TimerOutputs, Compat
 @compat public FitPar, fitPar, FitOpt, fitOpt, set_num_phase_intervals, calc_par
 
 """
@@ -84,9 +84,10 @@ mutable struct FitOpt
     R2s_acc::Float64
     optim::Bool
     λ_tikh::Float64
-    n_chunks::Int
     K::Vector{Int}
     os_fac::Vector{Float64}
+    redundancy::Float64
+    n_chunks::Int
 end
 
 """
@@ -105,17 +106,18 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `n_chunks == 8Threads.nthreads()`
 """
 function fitOpt(ϕ_scale = 1.0)
-    n_ϕ = 3
+    n_ϕ = 4
     ϕ_rngs = phase_search_intervals(n_ϕ, ϕ_scale)
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
     optim = true
     λ_tikh = 1.e-6
-    n_chunks = 8Threads.nthreads()
     K = []
     os_fac = [2.0]
-    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, λ_tikh, n_chunks, K, os_fac)
+    redundancy = Inf
+    n_chunks = 8Threads.nthreads()
+    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, λ_tikh, K, os_fac, redundancy, n_chunks)
 end
 
 """
@@ -172,6 +174,12 @@ Extract model specific information and store it in array `res`.
 - `res::AbstractArray`: Allocated space for the results (`size(res) == size(fitpar.S)`).
 """
 function calc_par(fitpar::FitPar{T}, fitopt::FitOpt, parfun::Function, res::AbstractArray) where {T<:AbstractGREMultiEcho}
+    # a return value for diagnostics 
+    d = Dict()
+    
+    # timing will always be monitored
+    d[:time] = TimerOutput()
+
     # Cartesian indices of valid data (defined by the mask S)
     cis = CartesianIndices(fitpar.S)[fitpar.S]
     cis_chunks = [view(cis, index_chunks(cis, n=fitopt.n_chunks)[i]) for i in 1:fitopt.n_chunks]
@@ -184,7 +192,7 @@ function calc_par(fitpar::FitPar{T}, fitopt::FitOpt, parfun::Function, res::Abst
     end
 
     # do the work
-    @time Threads.@threads for cis_chunk in cis_chunks
+    @timeit d[:time] "calc_par" Threads.@threads for cis_chunk in cis_chunks
         # take free models
         gre = take!(ch_gre)
 

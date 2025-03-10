@@ -1,5 +1,5 @@
-using LinearAlgebra, ChunkSplitters, FFTW, StatsBase, Optim, Compat
-using Plots: plot, scatter!
+using LinearAlgebra, ChunkSplitters, FFTW, StatsBase, Optim, Random, TimerOutputs, Compat
+using Plots: plot, scatter!, heatmap
 import VP4Optim as VP
 @compat public BSmooth, calc, phase_map, phaser, smooth_projection!
 
@@ -14,6 +14,13 @@ Supertype of smooth bases.
 - `N` does not necessarily equal the dimension of the data set. Specifically, `N == 2` makes sense for multi-slice data, if there are not enough slices for reasonable interpolation in that direction.
 """
 abstract type BSmooth{N} end
+
+"""
+    Nfree(::BSmooth)
+
+Return real degrees of freedom of subspace
+"""
+function Nfree(::BSmooth) end
 
 """
     ∇Bt∇B_∇Bty(::BSmooth, ::AbstractVector, ::AbstractVector)
@@ -60,44 +67,67 @@ Take the data set and do the analysis.
 - `fitopt::FitOpt`: Fit options
 - `bs::Union{Nothing, BSmooth}`: Smooth subspace for PHASER (default: `nothing`)
 """
-function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; diagnostics=false) where {N}
-    # do a local fit
-    local_fit(fitpar, fitopt)
-    
-    d = Dict()
-    
+function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; locfit=true, diagnostics=false) where {N}
+    # timing will always be monitored
+    to = TimerOutput()
+
+    # only GSS for PHASER
+    optim = fitopt.optim
+    fitopt.optim = false
+
+    # generate subsampled mask
+    @timeit to "subsample mask" S_PHASER = subsample_mask(fitpar, fitopt, bs)
+
+    # do a local fit on S_PHASER only
+    S_orig = deepcopy(fitpar.S)
+
+    fitpar.S[:] .= S_PHASER[:]
+
+    @timeit to "prep phaser" local_fit(fitpar, fitopt)
+
+    # save the local fit results, if desired
     if diagnostics
         ϕ, R2s, c, χ2 = deepcopy(fitpar.ϕ), deepcopy(fitpar.R2s), deepcopy(fitpar.c), deepcopy(fitpar.χ2)
-        d[:ML] = (; ϕ, R2s, c, χ2)
+        ML = (; ϕ, R2s, c, χ2)
     end
-    
+
     # PHASER
-    if N < ndims(fitpar.S)
+    @timeit to "calc phaser" if N < ndims(fitpar.S)
         @assert N == 2 && ndims(fitpar.S) == 3 # what else? (we rely on that below)
         n_sl = size(fitpar.S)[end]
 
+        PHASER = []
+
         for j in 1:n_sl
-            data_sl = @views reshape(fitpar.data, size(fitpar.S)..., :)[:,:,j,:]
-            S_sl = @views fitpar.S[:,:,j]
+            data_sl = @views reshape(fitpar.data, size(fitpar.S)..., :)[:, :, j, :]
+            S_sl = @views fitpar.S[:, :, j]
             fitpar_sl = fitPar(fitpar.gre, data_sl, S_sl)
+            fitpar_sl.ϕ[:, :] .= @views fitpar.ϕ[:, :, j]
+            S_orig_sl = @views S_orig[:, :, j]
 
-            d[:PHASER] = pure_phaser(fitpar_sl, fitopt, bs, diagnostics)
+            push!(PHASER, pure_phaser(fitpar_sl, fitopt, bs, S_orig_sl, diagnostics))
 
-            fitpar.ϕ[:,:,j] .= fitpar_sl.ϕ
-            fitpar.R2s[:,:,j] .= fitpar_sl.R2s
-            fitpar.c[:,:,j] .= fitpar_sl.c
-            fitpar.χ2[:,:,j] .= fitpar_sl.χ2
+            fitpar.ϕ[:, :, j] .= fitpar_sl.ϕ
+            fitpar.R2s[:, :, j] .= fitpar_sl.R2s
+            fitpar.c[:, :, j] .= fitpar_sl.c
+            fitpar.χ2[:, :, j] .= fitpar_sl.χ2
         end
     elseif N == ndims(fitpar.S)
-        d[:PHASER] = pure_phaser(fitpar, fitopt, bs, diagnostics)
+        PHASER = pure_phaser(fitpar, fitopt, bs, S_orig, diagnostics)
     else
         error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
     end
 
-    # repeat the local fit, based upon the PHASER ϕ
-    local_fit(fitpar, fitopt)
+    # restore fitpar and fitopt
+    fitpar.S[:] .= S_orig[:]
+    fitopt.optim = optim
 
-    return d
+    if locfit
+        # repeat the local fit, based upon the PHASER ϕ
+        @timeit to "local fit" local_fit(fitpar, fitopt)
+    end
+
+    diagnostics ? (; to, ML, PHASER, S_PHASER) : (; to)
 end
 
 """
@@ -105,12 +135,15 @@ end
 
 TBW
 """
-function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, diagnostics=false) where {T<:AbstractGREMultiEcho}
+function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig, diagnostics=false) where {T<:AbstractGREMultiEcho}
     # some useful aliases
     data = fitpar.data
-    S = fitpar.S
     ϕ = fitpar.ϕ
+    S = fitpar.S
     szS = size(S)
+
+    # monitor timing
+    to = TimerOutput()
 
     # local ML phase factor estimate
     z = ones(ComplexF64, szS)
@@ -120,7 +153,7 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, diagnostics
     # Smooth phase map (linearized gradients)
     # ======================================================================
 
-    @time begin
+    @timeit to "lin. grad." begin
         print("Smooth phase map (linearized gradients) ... ")
 
         # calculate local difference map ∇z and associated masks
@@ -134,10 +167,10 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, diagnostics
 
         # first guess of smooth phase map ...
         ϕ_0 = zeros(szS)
-        ϕ_0[S] .= @views phase_map(bs, c)[S]
+        ϕ_0[S_orig] .= @views phase_map(bs, c)[S_orig]
 
         # calculate generic global offset (for best match with phase factor z)
-        calc_generic_offset!(ϕ_0, z, S)
+        calc_generic_offset!(ϕ_0, z, S, S_orig)
 
         # remaining deviations
         # since we now also look at local phase factors as such (instead on their gradients only)
@@ -158,7 +191,7 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, diagnostics
     # Improved smooth phase map (correct gradients)
     # ======================================================================
 
-    @time begin
+    @timeit to "corr. grad." begin
         print("Smooth phase map (correct gradients) ... ")
 
         # to avoid linearization errors, we now use the logarithm of phase factor difference
@@ -172,10 +205,10 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, diagnostics
         ∇Btly = calc_∇Btx(bs, Sj, imag.(ly))
         c = (∇Bt∇B + λ_tikh * I) \ ∇Btly
         ϕ_1 = zeros(szS)
-        ϕ_1[S] .= @views ϕ_0[S] .+ phase_map(bs, c)[S]
+        ϕ_1[S_orig] .= @views ϕ_0[S_orig] .+ phase_map(bs, c)[S_orig]
 
         # calculate generic global offset (for best match with phase factor z)
-        calc_generic_offset!(ϕ_1, z, S)
+        calc_generic_offset!(ϕ_1, z, S, S_orig)
 
         # remaining deviations
         # since we now also look at local phase factors as such (instead on their gradients only)
@@ -196,43 +229,48 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, diagnostics
     # Balancing of agreement with phase factor and derivative
     # ======================================================================
 
-    @time begin
+    @timeit to "balance cost" begin
         print("Search for best cost function to describe data ... ")
 
         BtB = calc_BtB(bs, S)
 
         lz = zeros(ComplexF64, szS)
         @. lz[S] = @views log(Δz_1[S])
+
         Btlz = calc_Btx(bs, S, imag.(lz))
 
         for (ly_, Sj_, y_) in zip(ly, Sj, Δy_1)
             @. ly_[Sj_] = @views log(y_[Sj_] + 1)
         end
+
         ∇Btly = calc_∇Btx(bs, Sj, imag.(ly))
 
         A, a, B, b = BtB, Btlz, ∇Bt∇B, ∇Btly
 
-        Sλ = S # here, we can introduce sparsity to speed up
-        fitparλ = fitPar(fitpar.gre, data, Sλ)
+        fitparλ = fitPar(fitpar.gre, data, S)
         set_num_phase_intervals(fitparλ, fitopt, 0)
-        optim = fitopt.optim
-        fitopt.optim = false
 
         λ_opt, χ2_opt, λs, χ2s = GSS(
-            χ2_λ_fun(fitparλ, fitopt, bs, z, A, a, B, b, ϕ_1), (0.0, 1.0), 1e-4; show_all=true)
+            χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_1), (0.0, 1.0), 1e-4; show_all=true)
 
-        χ2_λ_fun(fitpar, fitopt, bs, z, A, a, B, b, ϕ_1)(λ_opt)
-        fitopt.optim = optim
+        iλ = sortperm(λs)
+        λs = λs[iλ]
+        χ2s = χ2s[iλ]
+
+        # take the best match and calculate the solution on S_orig
+        fitpar.S[:] .= S_orig[:]
+
+        χ2_λ_fun(fitpar, fitopt, bs, A, a, B, b, ϕ_1)(λ_opt)
 
         println("done.")
     end
-    
+
     # return diagnostic information, if desired
     if diagnostics
         ϕ = deepcopy(ϕ)
-        (; ϕ, ϕ_0, ϕ_1, Δϕ_0, Δϕ_1, Δy_0, Δy_1, ly, lz, λ_opt, χ2_opt, λs, χ2s, y, Sj)
+        (; to, ϕ, ϕ_0, ϕ_1, Δϕ_0, Δϕ_1, Δy_0, Δy_1, ly, lz, λ_opt, χ2_opt, λs, χ2s, y, Sj)
     else
-        nothing
+        (; to)
     end
 end
 
@@ -267,12 +305,91 @@ Auxiliary routines
 ==================================================================  
 =#
 
+function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+    S = fitpar.S
+    S_PHASER = deepcopy(fitpar.S)
+
+    # target number of locations in mask, which contain a derivative in every direction
+    fitopt.redundancy * Nfree(bs)
+    Nsub = ceil(Int, min(fitopt.redundancy * Nfree(bs), 0.99typemax(Int)))
+
+    if N < ndims(S)
+        @assert N == 2 && ndims(S) == 3 # what else? (we rely on that below)
+        n_sl = size(S)[end]
+
+        for j in 1:n_sl
+            S_PHASER_sl = @views S_PHASER[:, :, j]
+            S_sl = @views S[:, :, j]
+            calc_subsample_mask!(S_PHASER_sl, S_sl, Nsub)
+        end
+    elseif N == ndims(S)
+        calc_subsample_mask!(S_PHASER, S, Nsub)
+    else
+        error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
+    end
+
+    S_PHASER
+end
+
+"""
+    calc_subsample_mask!(Ssub, S, Nsub)
+
+TBW
+"""
+function calc_subsample_mask!(Ssub, S, Nsub)
+    # set dimension
+    ndS = ndims(S)
+
+    # set index ranges 
+    ciS = CartesianIndices(S)
+    fiS, liS = first(ciS), last(ciS)
+
+    # unit step in each direction
+    ejs = [CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS)) for j in 1:ndS]
+
+    # initialize
+    fill!(Ssub, false)
+
+    # determine subset of data points with direct neighbours in every direction
+    ej = ejs[1]
+
+    for iS in fiS:liS-ej
+        S[iS] && S[iS+ej] && (Ssub[iS] = true)
+    end
+
+    for ej in ejs[2:end]
+        for iS in fiS:liS-ej
+            !Ssub[iS] && continue
+            !(S[iS] && S[iS+ej]) && (Ssub[iS] = false)
+        end
+    end
+
+    # number of candidate locations
+    Ncand = @views sum(Ssub[S])
+
+    # reduce mask, if possible
+    if Nsub < Ncand
+        ciSca = CartesianIndices(Ssub)[Ssub]
+        iSubs = randperm(Ncand)[1:Nsub]
+
+        Ssub[S] .= false
+
+        for i in iSubs
+            ci = ciSca[i]
+            Ssub[ci] = true
+            for ej in ejs
+                Ssub[ci+ej] = true
+            end
+        end
+    end
+end
+
 """
     calc_generic_offset!(ϕ, z, S)
 
 TBW
 """
-function calc_generic_offset!(ϕ, z, S)
+function calc_generic_offset!(ϕ, z, S, S_orig)
     # coefficient b
     b = @views angle(sum(z[S] .* exp.(-im .* ϕ[S])))
 
@@ -291,7 +408,7 @@ function calc_generic_offset!(ϕ, z, S)
     end
 
     # add offset to ϕ
-    @. ϕ[S] += b
+    @. ϕ[S_orig] += b
 
     # return offset
     b
@@ -450,23 +567,17 @@ end
 
 TBW
 """
-function χ2_λ_fun(fitparλ, fitopt, bs, z, A, a, B, b, ϕ_1)
+function χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_1)
     λ -> begin
-        if λ == 0
-            println("This should not happen.")
-            λ_tikh = fitopt.λ_tikh * mean(real.(diag(B)))
-            c = (B + λ_tikh * I) \ b
-            fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, c)[fitparλ.S]
-            calc_generic_offset!(fitparλ.ϕ, z, fitparλ.S)
-        else
-            mat_λ = λ .* A
-            @. mat_λ[2:end, 2:end] += (1 - λ) * B
-            λ_tikh = fitopt.λ_tikh * mean(real.(diag(mat_λ)))
-            vec_λ = λ .* a
-            @. vec_λ[2:end] += (1 - λ) * b
-            c = (mat_λ + λ_tikh * I) \ vec_λ
-            fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end])[fitparλ.S] .+ ϕ_1[fitparλ.S]
-        end
+        @assert λ ≠ 0
+
+        mat_λ = λ .* A
+        @. mat_λ[2:end, 2:end] += (1 - λ) * B
+        λ_tikh = fitopt.λ_tikh * mean(real.(diag(mat_λ)))
+        vec_λ = λ .* a
+        @. vec_λ[2:end] += (1 - λ) * b
+        c = (mat_λ + λ_tikh * I) \ vec_λ
+        fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end])[fitparλ.S] .+ ϕ_1[fitparλ.S]
 
         local_fit(fitparλ, fitopt)
         sum(fitparλ.χ2[fitparλ.S])
