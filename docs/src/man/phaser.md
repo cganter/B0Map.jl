@@ -20,7 +20,6 @@ phase_map(::BSmooth, ::AbstractVector)
 ## Regularized phase map
 
 ```@docs
-calc!
 phaser
 smooth_projection!
 ```
