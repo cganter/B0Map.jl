@@ -9,61 +9,6 @@ import VP4Optim as VP
 @compat public ModParWFRW, check, GREMultiEchoWFRW, fat_fraction
 
 """
-    ModParWFRW <: VP4Optim.ModPar
-
-Parameters to setup an instance of `GREMultiEchoWF`
-
-## Fields
-- `ts::Vector{Float64}`: Echo times [ms]
-- `B0::Float64`: Field strength [T]
-- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
-- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
-- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
-- `x_sym::Vector{Symbol}`: Variable parameters
-- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
-"""
-struct ModParWFRW <: VP.ModPar
-    ts::Vector{Float64}
-    B0::Float64
-    ppm_fat::Vector{Float64}
-    ampl_fat::Vector{Float64}
-    precession::Symbol
-    x_sym::Vector{Symbol}
-    Δt::Float64
-end
-
-"""
-    ModParWFRW()
-
-Return default instance of `ModParWFRW`
-"""
-function ModParWFRW()
-    ts = Float64[]
-    B0 = 0.0
-    ppm_fat = Float64[]
-    ampl_fat = Float64[]
-    precession = :unknown
-    x_sym = [:ϕ, :R2s]
-    Δt = 0.0
-    
-    ModParWFRW(ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt)
-end
-
-"""
-    VP.check(pars::ModParWFRW)
-
-Throws an exception, if the fields in `pars` are defined inconsistently.
-"""
-function VP.check(pars::ModParWFRW)
-    @assert length(pars.ts) > 1
-    @assert pars.B0 > 0
-    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
-    @assert pars.precession ∈ [:clockwise, :counterclockwise]
-    @assert all(sy -> sy ∈ [:ϕ, :R2s], pars.x_sym)
-    @assert pars.Δt ≥ 0.0
-end
-
-"""
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model
 
 ## Scope
@@ -106,6 +51,15 @@ mutable struct GREMultiEchoWFRW{Ny,Nx,Nc,Nt} <: AbstractGREMultiEcho{Ny,Nx,2,Flo
 end
 
 """
+    nTE(::GREMultiEchoWFRW{Ny,Nx,Nc,Nt}) where {Ny,Nx,Nc,Nt}
+
+Return number of recorded echoes
+"""
+function nTE(::GREMultiEchoWFRW{Ny,Nx,Nc,Nt}) where {Ny,Nx,Nc,Nt}
+    Nt
+end
+
+"""
     fat_fraction(gre::GREMultiEchoWFRW)
 
 Calculate and return fat fraction ``|r_f| / (|r_w| + |r_f|)``.
@@ -116,12 +70,76 @@ function fat_fraction(gre::GREMultiEchoWFRW)
 end
 
 """
+    max_derivative(::GREMultiEchoWFRW)
+
+Return max. implemented derivative order.
+"""
+function max_derivative(::GREMultiEchoWFRW)
+    0
+end
+
+"""
     coil_phase(gre::GREMultiEchoWFRW)
 
 Return (coil) phase ``\\theta``.
 """
 function coil_phase(gre::GREMultiEchoWFRW)
     gre.c_phase
+end
+
+"""
+    ModParWFRW <: VP4Optim.ModPar{GREMultiEchoWFRW}
+
+Parameters to setup an instance of `GREMultiEchoWF`
+
+## Fields
+- `ts::Vector{Float64}`: Echo times [ms]
+- `B0::Float64`: Field strength [T]
+- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
+- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
+- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
+- `x_sym::Vector{Symbol}`: Variable parameters
+- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
+"""
+struct ModParWFRW <: VP.ModPar{GREMultiEchoWFRW}
+    ts::Vector{Float64}
+    B0::Float64
+    ppm_fat::Vector{Float64}
+    ampl_fat::Vector{Float64}
+    precession::Symbol
+    x_sym::Vector{Symbol}
+    Δt::Float64
+end
+
+"""
+    ModParWFRW()
+
+Return default instance of `ModParWFRW`
+"""
+function VP.ModPar(::Type{GREMultiEchoWFRW})
+    ts = Float64[]
+    B0 = 0.0
+    ppm_fat = Float64[]
+    ampl_fat = Float64[]
+    precession = :unknown
+    x_sym = [:ϕ, :R2s]
+    Δt = 0.0
+    
+    ModParWFRW(ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt)
+end
+
+"""
+    VP.check(pars::ModParWFRW)
+
+Throws an exception, if the fields in `pars` are defined inconsistently.
+"""
+function VP.check(pars::ModParWFRW)
+    @assert length(pars.ts) > 1
+    @assert pars.B0 > 0
+    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
+    @assert pars.precession ∈ [:clockwise, :counterclockwise]
+    @assert all(sy -> sy ∈ [:ϕ, :R2s], pars.x_sym)
+    @assert pars.Δt ≥ 0.0
 end
 
 """

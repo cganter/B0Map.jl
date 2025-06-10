@@ -1,5 +1,4 @@
 using LinearAlgebra, ChunkSplitters, FFTW, StatsBase, Optim, Random, TimerOutputs, Compat
-using Plots: plot, scatter!, heatmap
 import VP4Optim as VP
 @compat public BSmooth, calc, phase_map, phaser, smooth_projection!
 
@@ -61,19 +60,22 @@ Take the data set and do the analysis.
 ## What it does
 - First, a local fit is performed.
 - If a smooth basis `bs` is supplied, the result is refined by subspace-based regularization.
-- 
+- If `fitopt.locfit == true`, a final local fit based upon PHASER is performed.
 ## Arguments
 - `fitpar::FitPar`: Fit parameters
 - `fitopt::FitOpt`: Fit options
-- `bs::Union{Nothing, BSmooth}`: Smooth subspace for PHASER (default: `nothing`)
+- `bs::BSmooth{N}`: Smooth subspace for PHASER
 """
-function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; locfit=true, diagnostics=false) where {N}
+function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     # timing will always be monitored
     to = TimerOutput()
 
     # only GSS for PHASER
     optim = fitopt.optim
     fitopt.optim = false
+    
+    # save original value
+    n_ϕ = fitopt.n_ϕ
 
     # generate subsampled mask
     @timeit to "subsample mask" S_PHASER = subsample_mask(fitpar, fitopt, bs)
@@ -86,7 +88,7 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; locfit=true, dia
     @timeit to "prep phaser" local_fit(fitpar, fitopt)
 
     # save the local fit results, if desired
-    if diagnostics
+    if fitopt.diagnostics
         ϕ, R2s, c, χ2 = deepcopy(fitpar.ϕ), deepcopy(fitpar.R2s), deepcopy(fitpar.c), deepcopy(fitpar.χ2)
         ML = (; ϕ, R2s, c, χ2)
     end
@@ -101,11 +103,11 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; locfit=true, dia
         for j in 1:n_sl
             data_sl = @views reshape(fitpar.data, size(fitpar.S)..., :)[:, :, j, :]
             S_sl = @views fitpar.S[:, :, j]
-            fitpar_sl = fitPar(fitpar.gre, data_sl, S_sl)
+            fitpar_sl = fitPar(fitpar.grePar, data_sl, S_sl)
             fitpar_sl.ϕ[:, :] .= @views fitpar.ϕ[:, :, j]
             S_orig_sl = @views S_orig[:, :, j]
 
-            push!(PHASER, pure_phaser(fitpar_sl, fitopt, bs, S_orig_sl, diagnostics))
+            push!(PHASER, pure_phaser(fitpar_sl, fitopt, bs, S_orig_sl))
 
             fitpar.ϕ[:, :, j] .= fitpar_sl.ϕ
             fitpar.R2s[:, :, j] .= fitpar_sl.R2s
@@ -113,7 +115,7 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; locfit=true, dia
             fitpar.χ2[:, :, j] .= fitpar_sl.χ2
         end
     elseif N == ndims(fitpar.S)
-        PHASER = pure_phaser(fitpar, fitopt, bs, S_orig, diagnostics)
+        PHASER = pure_phaser(fitpar, fitopt, bs, S_orig)
     else
         error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
     end
@@ -122,12 +124,15 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}; locfit=true, dia
     fitpar.S[:] .= S_orig[:]
     fitopt.optim = optim
 
-    if locfit
+    if fitopt.locfit
         # repeat the local fit, based upon the PHASER ϕ
         @timeit to "local fit" local_fit(fitpar, fitopt)
     end
 
-    diagnostics ? (; to, ML, PHASER, S_PHASER) : (; to)
+    # restore fitpar and fitopt
+    set_num_phase_intervals(fitpar, fitopt, n_ϕ)
+    
+    fitopt.diagnostics ? (; to, ML, PHASER, S_PHASER) : (; to)
 end
 
 """
@@ -135,7 +140,7 @@ end
 
 TBW
 """
-function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig, diagnostics=false) where {T<:AbstractGREMultiEcho}
+function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig) where {T<:AbstractGREMultiEcho}
     # some useful aliases
     data = fitpar.data
     ϕ = fitpar.ϕ
@@ -247,7 +252,7 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig, dia
 
         A, a, B, b = BtB, Btlz, ∇Bt∇B, ∇Btly
 
-        fitparλ = fitPar(fitpar.gre, data, S)
+        fitparλ = fitPar(fitpar.grePar, data, S)
         set_num_phase_intervals(fitparλ, fitopt, 0)
 
         λ_opt, χ2_opt, λs, χ2s = GSS(
@@ -266,7 +271,7 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig, dia
     end
 
     # return diagnostic information, if desired
-    if diagnostics
+    if fitopt.diagnostics
         ϕ = deepcopy(ϕ)
         (; to, ϕ, ϕ_0, ϕ_1, Δϕ_0, Δϕ_1, Δy_0, Δy_1, ly, lz, λ_opt, χ2_opt, λs, χ2s, y, Sj)
     else
@@ -307,11 +312,16 @@ Auxiliary routines
 
 function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     S = fitpar.S
+    
+    fitopt.redundancy == Inf && return S
+
     S_PHASER = deepcopy(fitpar.S)
 
     # target number of locations in mask, which contain a derivative in every direction
     fitopt.redundancy * Nfree(bs)
     Nsub = ceil(Int, min(fitopt.redundancy * Nfree(bs), 0.99typemax(Int)))
+
+    
 
     if N < ndims(S)
         @assert N == 2 && ndims(S) == 3 # what else? (we rely on that below)
@@ -320,10 +330,10 @@ function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N
         for j in 1:n_sl
             S_PHASER_sl = @views S_PHASER[:, :, j]
             S_sl = @views S[:, :, j]
-            calc_subsample_mask!(S_PHASER_sl, S_sl, Nsub)
+            calc_subsample_mask!(S_PHASER_sl, S_sl, Nsub, fitopt.rng)
         end
     elseif N == ndims(S)
-        calc_subsample_mask!(S_PHASER, S, Nsub)
+        calc_subsample_mask!(S_PHASER, S, Nsub, fitopt.rng)
     else
         error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
     end
@@ -336,7 +346,7 @@ end
 
 TBW
 """
-function calc_subsample_mask!(Ssub, S, Nsub)
+function calc_subsample_mask!(Ssub, S, Nsub, rng)
     # set dimension
     ndS = ndims(S)
 
@@ -353,7 +363,7 @@ function calc_subsample_mask!(Ssub, S, Nsub)
     # determine subset of data points with direct neighbours in every direction
     ej = ejs[1]
 
-    for iS in fiS:liS-ej
+    for iS in fiS:(liS-fiS)
         S[iS] && S[iS+ej] && (Ssub[iS] = true)
     end
 
@@ -370,7 +380,7 @@ function calc_subsample_mask!(Ssub, S, Nsub)
     # reduce mask, if possible
     if Nsub < Ncand
         ciSca = CartesianIndices(Ssub)[Ssub]
-        iSubs = randperm(Ncand)[1:Nsub]
+        iSubs = randperm(rng, Ncand)[1:Nsub]
 
         Ssub[S] .= false
 

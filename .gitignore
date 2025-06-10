@@ -2,7 +2,13 @@
 *.jl.cov
 *.jl.mem
 *.pdf
+*.ps
+*.eps
+*.h5
+*.svg
 scratch.jl
 /Manifest.toml
 /docs/Manifest.toml
 /docs/build/
+/test/wip/
+/test/phaser_paper

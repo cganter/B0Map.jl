@@ -18,7 +18,7 @@ ppm_fat = [-3.80, -3.40, -2.60, -1.94, -0.39, 0.60]
 ampl_fat = [0.087, 0.693, 0.128, 0.004, 0.039, 0.048]
 
 # set up model constructor parameters
-pars = VP.modpar(BM.ModParWF;
+pars = VP.modpar(BM.GREMultiEchoWF;
     ts = TEs,
     B0 = B0,
     ppm_fat = ppm_fat,
@@ -68,9 +68,9 @@ for nc in ncs
         res[precession] = Dict()
         # check, whether the fat fraction is calculated correctly
         pars_mf = VP.modpar(pars, precession = precession, mode = :manual_fat, x_sym = [:ϕ, :R2s, :f])
-        gre_mf = BM.GREMultiEchoWF(pars_mf)
+        gre_mf = VP.create_model(pars_mf)
         pars_af = VP.modpar(pars, precession = precession, mode = :auto_fat, x_sym = [:ϕ, :R2s])
-        gre_af = BM.GREMultiEchoWF(pars_af)
+        gre_af = VP.create_model(pars_af)
         VP.x!(gre_mf, x_mf)
         y = vec(VP.A(gre_mf) * transpose(c))
         VP.y!(gre_mf, y)
@@ -83,11 +83,11 @@ for nc in ncs
         res[precession][:true_c] = c
         @test c ≈ VP.c(gre_af) ≈ VP.c(gre_mf)
 
-        res[precession][:check_model] = VP.check_model(BM.GREMultiEchoWF, pars_mf, 
+        res[precession][:check_model] = VP.check_model(pars_mf, 
             x_mf, c, y, what = what, x0 = x0_mf, lx = lx_mf, ux = ux_mf, x_scale = x_scale_mf, 
             visual = visual, rng = rng, Hessian = Hessian)
 
-        res[precession][:check_model] = VP.check_model(BM.GREMultiEchoWF, pars_af, 
+        res[precession][:check_model] = VP.check_model(pars_af, 
             x_af, c, y, what = what, x0 = x0_af, lx = lx_af, ux = ux_af, x_scale = x_scale_af,
             visual = visual, rng = rng, Hessian = Hessian)
     end

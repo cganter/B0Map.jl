@@ -9,61 +9,6 @@ import VP4Optim as VP
 @compat public ModParWFFW, check, GREMultiEchoWFFW, fat_fraction
 
 """
-    ModParWFFW <: VP4Optim.ModPar
-
-Parameters to setup an instance of `GREMultiEchoWF`
-
-## Fields
-- `ts::Vector{Float64}`: Echo times [ms]
-- `B0::Float64`: Field strength [T]
-- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
-- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
-- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
-- `x_sym::Vector{Symbol}`: Variable parameters
-- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
-"""
-struct ModParWFFW <: VP.ModPar
-    ts::Vector{Float64}
-    B0::Float64
-    ppm_fat::Vector{Float64}
-    ampl_fat::Vector{Float64}
-    precession::Symbol
-    x_sym::Vector{Symbol}
-    Δt::Float64
-end
-
-"""
-    ModParWFFW()
-
-Return default instance of `ModParWFFW`
-"""
-function ModParWFFW()
-    ts = Float64[]
-    B0 = 0.0
-    ppm_fat = Float64[]
-    ampl_fat = Float64[]
-    precession = :unknown
-    x_sym = [:ϕ, :R2s]
-    Δt = 0.0
-    
-    ModParWFFW(ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt)
-end
-
-"""
-    VP.check(pars::ModParWFFW)
-
-Throws an exception, if the fields in `pars` are defined inconsistently.
-"""
-function VP.check(pars::ModParWFFW)
-    @assert length(pars.ts) > 1
-    @assert pars.B0 > 0
-    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
-    @assert pars.precession ∈ [:clockwise, :counterclockwise]
-    @assert all(sy -> sy ∈ [:ϕ, :R2s], pars.x_sym)
-    @assert pars.Δt ≥ 0.0
-end
-
-"""
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model
 
 ## Scope
@@ -101,6 +46,61 @@ mutable struct GREMultiEchoWFFW{Ny,Nx} <: AbstractGREMultiEcho{Ny,Nx,2,ComplexF6
     iΔt::ComplexF64
     ty::SVector{Ny,ComplexF64}
     w::SVector{Ny,ComplexF64}
+end
+
+"""
+    ModParWFFW <: VP4Optim.ModPar{GREMultiEchoWFFW}
+
+Parameters to setup an instance of `GREMultiEchoWF`
+
+## Fields
+- `ts::Vector{Float64}`: Echo times [ms]
+- `B0::Float64`: Field strength [T]
+- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
+- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
+- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
+- `x_sym::Vector{Symbol}`: Variable parameters
+- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
+"""
+struct ModParWFFW <: VP.ModPar{GREMultiEchoWFFW}
+    ts::Vector{Float64}
+    B0::Float64
+    ppm_fat::Vector{Float64}
+    ampl_fat::Vector{Float64}
+    precession::Symbol
+    x_sym::Vector{Symbol}
+    Δt::Float64
+end
+
+"""
+    VP.ModPar(::Type{GREMultiEchoWFFW})
+
+Return default instance of `ModParWFFW`
+"""
+function VP.ModPar(::Type{GREMultiEchoWFFW})
+    ts = Float64[]
+    B0 = 0.0
+    ppm_fat = Float64[]
+    ampl_fat = Float64[]
+    precession = :unknown
+    x_sym = [:ϕ, :R2s]
+    Δt = 0.0
+    
+    ModParWFFW(ts, B0, ppm_fat, ampl_fat, precession, x_sym, Δt)
+end
+
+"""
+    VP.check(pars::ModParWFFW)
+
+Throws an exception, if the fields in `pars` are defined inconsistently.
+"""
+function VP.check(pars::ModParWFFW)
+    @assert length(pars.ts) > 1
+    @assert pars.B0 > 0
+    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
+    @assert pars.precession ∈ [:clockwise, :counterclockwise]
+    @assert all(sy -> sy ∈ [:ϕ, :R2s], pars.x_sym)
+    @assert pars.Δt ≥ 0.0
 end
 
 """
@@ -161,6 +161,24 @@ function GREMultiEchoWFFW(::Val{Ny}, ::Val{Nx}, pars::ModParWFFW) where {Ny, Nx}
     
     GREMultiEchoWFFW{Ny,Nx}(sym, x_sym, par_sym, val, x_ind, par_ind, y, y2, ts, pars.B0, 
         pars.precession, ppm_fat, ampl_fat, ΔTE, Δt, ϕ_scale, Δt2, iΔt, ty, w)
+end
+
+"""
+    max_derivative(::GREMultiEchoWFFW)
+
+Return max. implemented derivative order.
+"""
+function max_derivative(::GREMultiEchoWFFW)
+    2
+end
+
+"""
+    nTE(::GREMultiEchoWFFW{Ny,Nx}) where {Ny,Nx}
+
+Return number of recorded echoes
+"""
+function nTE(::GREMultiEchoWFFW{Ny,Nx}) where {Ny,Nx}
+    Ny
 end
 
 """

@@ -1,11 +1,12 @@
-using ChunkSplitters, TimerOutputs, Compat
+import VP4Optim as VP
+using ChunkSplitters, TimerOutputs, Random, Compat
 @compat public FitPar, fitPar, FitOpt, fitOpt, set_num_phase_intervals, calc_par
 
 """
 Data structure for fitting images.
 
 ## Content
-- `gre::AbstractGREMultiEcho`: Specifics of the GRE acquisition and signal/tissue model
+- `grePar::VP4Optim.ModPar{AbstractGREMultiEcho}`: Specifics of the GRE acquisition and signal/tissue model
 - `args::Tuple`: Arguments used to construct `gre` (not including keyword arguments)
 - `data::Array`: Complex data
 - `S::Array`: Mask to specify ROI
@@ -18,7 +19,7 @@ Data structure for fitting images.
 """
 struct FitPar{T<:AbstractGREMultiEcho}
     # common part (local fit and PHASER)
-    gre::T
+    grePar::VP.ModPar{T}
     data::Array
     S::Array
     ϕ::Array
@@ -28,7 +29,7 @@ struct FitPar{T<:AbstractGREMultiEcho}
 end
 
 """
-    fitPar(gre::AbstractGREMultiEcho{Ny,Nx,Nc,T}, data::AbstractArray, S::AbstractArray) where {Ny,Nx,Nc,T}
+    fitPar(grePar::VP.ModPar{M}, data::AbstractArray, S::AbstractArray) where {Ny,Nx,Nc,T,M <: AbstractGREMultiEcho{Ny,Nx,Nc,T}}
 
 Constructor for [FitPar](@ref FitPar)
 
@@ -43,12 +44,13 @@ Constructor for [FitPar](@ref FitPar)
 - For single-coil images, this means `ndims(data) == ndims(S) + 1` with the last index enumerating the echoes.
 - For multi-coil data, we typically have `ndims(data) == ndims(S) + 2` with the last but one index enumerating echo times and the last index enumerating the coils.
 """
-function fitPar(gre::AbstractGREMultiEcho{Ny,Nx,Nc,T}, data::AbstractArray, S::AbstractArray) where {Ny,Nx,Nc,T}
+function fitPar(grePar::VP.ModPar{T}, data::AbstractArray, S::AbstractArray) where {T <: AbstractGREMultiEcho}
     szS = size(S)
-    c = Array{Vector{T}}(undef, szS)
-    fill!(c, zeros(T, Nc))
-    FitPar{typeof(gre)}(
-        gre,
+    gre = VP.create_model(grePar)
+    c = Array{Vector{VP.data_type(gre)}}(undef, szS)
+    fill!(c, zeros(VP.data_type(gre), VP.N_coeff(gre)))
+    FitPar{T}(
+        grePar,
         data,
         S,
         zeros(szS), # ϕ
@@ -64,30 +66,43 @@ Data structure holding the fit parameters.
 ## Local Fit and PHASER
 - `n_ϕ::Int`: number of golden section search (GSS) intervals for the initial phase search (with `R2s == 0`).
 - `ϕ_rngs::Array`: GSS intervals, associated with `n_ϕ`.
+- `Δϕ2::Float64`: Half interval for (optional) nonlinear optimization.
 - `R2s_rng::Array`: Search range for `R2s`.
 - `ϕ_acc::Float64`: Required GSS accuracy for `ϕ_acc`
 - `R2s_acc::Float64`: Required GSS accuracy for `R2s_acc`
+- `locfit::Bool`: Perform a final local fit, based upon PHASER.
 ## Local Fit only
-- `optim::Bool`: Non-linear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
+- `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
+- `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
 ## PHASER only
 - `λ_tikh::Float`: (Small) Tikhonov regularization parameter
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
+- `verbose::Bool`: Print information about what is actually done.
+- `diagnostics::Bool`: Return diagnostic information, e.g. for debugging.
+- `accel::Symbol`: Which acceleration technique should be used. Supported values are `:md` (multi-threading) and `:cuda` (GPU).
 ## Remark
 - Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) to modify `n_ϕ`, since only then `ϕ_rngs` will be set properly.
 """
 mutable struct FitOpt
     n_ϕ::Int
     ϕ_rngs::Vector{Vector{Float64}}
+    Δϕ2::Float64
     R2s_rng::Vector{Float64}
     ϕ_acc::Float64
     R2s_acc::Float64
+    locfit::Bool
     optim::Bool
+    autodiff::Symbol
     λ_tikh::Float64
     K::Vector{Int}
     os_fac::Vector{Float64}
     redundancy::Float64
     n_chunks::Int
+    rng::MersenneTwister
+    verbose::Bool
+    diagnostics::Bool
+    accel::Symbol
 end
 
 """
@@ -96,28 +111,42 @@ end
 Default constructor for [FitOpt](@ref FitOpt)
 
 ## Default values
-- `n_ϕ == 3`
+- `n_ϕ == 4`
 - `ϕ_rngs == phase_search_intervals(n_ϕ, ϕ_scale)`
+- `Δϕ2 == π / n_ϕ`
 - `R2s_rng == [0.0, 1.0]`
+- `locfit == true`
 - `ϕ_acc == 1.e-4`
 - `R2s_acc == 1.e-4`
 - `optim == true`
+- `autodiff == :finite`
 - `λ_tikh == 1.e-6`
 - `n_chunks == 8Threads.nthreads()`
+- `verbose == false`
+- `diagnostics == false`
+- `accel == :mt`
 """
 function fitOpt(ϕ_scale = 1.0)
     n_ϕ = 4
     ϕ_rngs = phase_search_intervals(n_ϕ, ϕ_scale)
+    Δϕ2 = π / n_ϕ
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
+    locfit = true
     optim = true
+    autodiff = :finite
     λ_tikh = 1.e-6
     K = []
     os_fac = [2.0]
     redundancy = Inf
     n_chunks = 8Threads.nthreads()
-    FitOpt(n_ϕ, ϕ_rngs, R2s_rng, ϕ_acc, R2s_acc, optim, λ_tikh, K, os_fac, redundancy, n_chunks)
+    rng = MersenneTwister()
+    verbose = false
+    diagnostics = false
+    accel = :mt
+    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, locfit, optim, autodiff, λ_tikh, K, 
+            os_fac, redundancy, n_chunks, rng, verbose, diagnostics, accel)
 end
 
 """
@@ -159,7 +188,8 @@ Sets the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
 """
 function set_num_phase_intervals(fitpar, fitopt, n_ϕ)
     fitopt.n_ϕ = n_ϕ
-    fitopt.ϕ_rngs = phase_search_intervals(n_ϕ, fitpar.gre.ϕ_scale)
+    gre = VP.create_model(fitpar.grePar)
+    fitopt.ϕ_rngs = phase_search_intervals(n_ϕ, gre.ϕ_scale)
 end
 
 """
@@ -186,9 +216,10 @@ function calc_par(fitpar::FitPar{T}, fitopt::FitOpt, parfun::Function, res::Abst
 
     # channel to prevent data races in case of multi-threaded execution
     ch_gre = Channel{T}(Threads.nthreads())
+    gre_ = VP.create_model(fitpar.grePar)
 
     for _ in 1:Threads.nthreads()
-        put!(ch_gre, deepcopy(fitpar.gre))
+        put!(ch_gre, deepcopy(gre_))
     end
 
     # do the work
@@ -258,5 +289,6 @@ Return the frequency map [Hz].
 - Simply rescales the phase map `fitpar.ϕ` instead of calling [`calc_par`](@ref calc_par).
 """
 function freq_map(fitpar)
-    (1000.0 / (2π * Δt(fitpar.gre))) .* fitpar.ϕ
+    gre = VP.create_model(fitpar.grePar)
+    (1000.0 / (2π * Δt(gre))) .* fitpar.ϕ
 end

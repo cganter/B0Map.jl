@@ -130,8 +130,13 @@ function fourier_lin(Nρ_orig, K; os_fac=[1.0])
     BFourierLin(Nρ, Nκ, Nν, K, Nρ_orig, κ, aκ, ciκ, ciκ_po, ciκ_ne, idx_po, idx_ne, ciκmκ0, ciκmκ, ciκpκ, ws_ρ, ws_κ, ρνs)
 end
 
+"""
+    Nfree(bf::BFourierLin{N}) where N
+
+Calculate dimension of smooth subspace (== number of free (real) parameters).
+"""
 function Nfree(bf::BFourierLin{N}) where N 
-    2N + prod(bf.K .+ 1) - 1
+    2N + prod(2 .* bf.K .+ 1)
 end
 
 """

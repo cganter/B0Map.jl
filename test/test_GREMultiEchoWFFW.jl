@@ -15,7 +15,7 @@ ppm_fat = [-3.80, -3.40, -2.60, -1.94, -0.39, 0.60]
 ampl_fat = [0.087, 0.693, 0.128, 0.004, 0.039, 0.048]
 
 # set up model constructor parameters
-pars = VP.modpar(BM.ModParWFFW;
+pars = VP.modpar(BM.GREMultiEchoWFFW;
     ts = TEs,
     B0 = B0,
     ppm_fat = ppm_fat,
@@ -59,10 +59,10 @@ res = Dict()
 for precession in (:counterclockwise, :clockwise)
     # generate ideal data
     pars_ = VP.modpar(pars, precession = precession)
-    gre_fw = BM.GREMultiEchoWFFW(pars_)
+    gre_fw = VP.create_model(pars_)
     VP.x!(gre_fw, x)
     y = VP.A(gre_fw) * c
 
-    res[precession] = VP.check_model(BM.GREMultiEchoWFFW, pars_, x, c, y, what = what, x0 = x0, lx = lx, ux = ux, 
+    res[precession] = VP.check_model(pars_, x, c, y, what = what, x0 = x0, lx = lx, ux = ux, 
         x_scale = x_scale, visual = visual, rng = rng, Hessian = Hessian)
 end

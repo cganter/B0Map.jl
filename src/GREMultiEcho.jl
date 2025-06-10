@@ -14,6 +14,13 @@ Abstract supertype of multi-echo GRE sequences
 abstract type AbstractGREMultiEcho{Ny,Nx,Nc,T} <: VP.Model{Ny,Nx,Nc,T} end
 
 """
+    nTE(::AbstractGREMultiEcho)
+
+Return number of recorded echoes
+"""
+function nTE(::AbstractGREMultiEcho) end
+
+"""
     Δt(gre::T) where T <: AbstractGREMultiEcho
 
 Return the effective echo spacing `Δt`.
@@ -35,3 +42,10 @@ Calculate and return the fat fraction.
 function fat_fraction(gre::AbstractGREMultiEcho)
     error("No implementation of fat_fraction() available for " * string(typeof(gre)))
 end
+
+"""
+    max_derivative(::AbstractGREMultiEcho)
+
+Return max. implemented derivative order.
+"""
+function max_derivative(::AbstractGREMultiEcho) end

@@ -13,74 +13,6 @@ struct AutoFat <: FatTrait end
 struct ManualFat <: FatTrait end
 
 """
-    ModParWF <: VP4Optim.ModPar
-
-Parameters to setup an instance of `GREMultiEchoWF`
-
-## Fields
-- `ts::Vector{Float64}`: Echo times [ms]
-- `B0::Float64`: Field strength [T]
-- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
-- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
-- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
-- `n_coils::Int`: Number of coils
-- `cov_mat::Matrix{ComplexF64}`: Coil covariance matrix
-- `mode::Symbol`: Calculate fat (`mode == :auto_fat`) or explicitly set it (`mode == :manual_fat`)
-- `x_sym::Vector{Symbol}`: Variable parameters
-- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
-"""
-struct ModParWF <: VP.ModPar
-    ts::Vector{Float64}
-    B0::Float64
-    ppm_fat::Vector{Float64}
-    ampl_fat::Vector{Float64}
-    precession::Symbol
-    n_coils::Int
-    cov_mat::Matrix{ComplexF64}
-    mode::Symbol
-    x_sym::Vector{Symbol}
-    Δt::Float64
-end
-
-"""
-    ModParWF()
-
-Return default instance of `ModParWF`
-"""
-function ModParWF()
-    ts = Float64[]
-    B0 = 0.0
-    ppm_fat = Float64[]
-    ampl_fat = Float64[]
-    precession = :unknown
-    n_coils = 1
-    cov_mat = ComplexF64[1;;]
-    mode = :auto_fat
-    x_sym = [:ϕ, :R2s]
-    Δt = 0.0
-    
-    ModParWF(ts, B0, ppm_fat, ampl_fat, precession, n_coils, cov_mat, mode, x_sym, Δt)
-end
-
-"""
-    VP.check(pars::ModParWF)
-
-Throws an exception, if the fields in `pars` are defined inconsistently.
-"""
-function VP.check(pars::ModParWF)
-    @assert length(pars.ts) > 1
-    @assert pars.B0 > 0
-    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
-    @assert pars.precession ∈ [:clockwise, :counterclockwise]
-    @assert pars.n_coils == size(pars.cov_mat, 1) == size(pars.cov_mat, 2)
-    @assert pars.cov_mat' ≈ pars.cov_mat
-    @assert pars.mode ∈ [:auto_fat, :manual_fat]
-    sym = pars.mode == :auto_fat ? [:ϕ, :R2s] : [:ϕ, :R2s, :f]
-    @assert all(sy -> sy ∈ sym, pars.x_sym)
-    @assert pars.Δt ≥ 0.0
-end
-
-"""
 [VP4Optim](https://cganter.github.io/VP4Optim.jl/stable/) model
 
 ## Scope
@@ -152,12 +84,30 @@ mutable struct GREMultiEchoWF{Ny,Nx,Nc,Nt} <: AbstractGREMultiEcho{Ny,Nx,Nc,Comp
 end
 
 """
+    nTE(::GREMultiEchoWF{Ny,Nx,Nc,Nt}) where {Ny,Nx,Nc,Nt}
+
+Return number of recorded echoes
+"""
+function nTE(::GREMultiEchoWF{Ny,Nx,Nc,Nt}) where {Ny,Nx,Nc,Nt}
+    Nt
+end
+
+"""
     fat_fraction(gre::GREMultiEchoWF)
 
 Just returns the actual value of `f`, whether calculated automatically or set manually.
 """
 function fat_fraction(gre::GREMultiEchoWF)
     abs(gre.val[3])
+end
+
+"""
+    max_derivative(::GREMultiEchoWF)
+
+Return max. implemented derivative order.
+"""
+function max_derivative(::GREMultiEchoWF)
+    2
 end
 
 """
@@ -181,6 +131,74 @@ Auxiliary routine
 """
 function fatTrait(gre::GREMultiEchoWF)
     gre.fat_trait
+end
+
+"""
+    ModParWF <: VP4Optim.ModPar{GREMultiEchoWF}
+
+Parameters to setup an instance of `GREMultiEchoWF`
+
+## Fields
+- `ts::Vector{Float64}`: Echo times [ms]
+- `B0::Float64`: Field strength [T]
+- `ppm_fat::Vector{Float64}`: Chemical shift of fat peaks [ppm]
+- `ampl_fat::Vector{Float64}`: Relative amplitudes of fat peaks (`≥ 0`, add up to one)
+- `precession::Symbol`: Direction of `precession ∈ (:clockwise, :counterclockwise)`
+- `n_coils::Int`: Number of coils
+- `cov_mat::Matrix{ComplexF64}`: Coil covariance matrix
+- `mode::Symbol`: Calculate fat (`mode == :auto_fat`) or explicitly set it (`mode == :manual_fat`)
+- `x_sym::Vector{Symbol}`: Variable parameters
+- `Δt::Float64`: Effective echo spacing (see docs), `Δt == 0` means `Δt = mean(ΔTE)`
+"""
+struct ModParWF <: VP.ModPar{GREMultiEchoWF}
+    ts::Vector{Float64}
+    B0::Float64
+    ppm_fat::Vector{Float64}
+    ampl_fat::Vector{Float64}
+    precession::Symbol
+    n_coils::Int
+    cov_mat::Matrix{ComplexF64}
+    mode::Symbol
+    x_sym::Vector{Symbol}
+    Δt::Float64
+end
+
+"""
+    VP.ModPar(::Type{GREMultiEchoWF})
+
+Return default instance of `ModParWF`
+"""
+function VP.ModPar(::Type{GREMultiEchoWF})
+    ts = Float64[]
+    B0 = 0.0
+    ppm_fat = Float64[]
+    ampl_fat = Float64[]
+    precession = :unknown
+    n_coils = 1
+    cov_mat = ComplexF64[1;;]
+    mode = :auto_fat
+    x_sym = [:ϕ, :R2s]
+    Δt = 0.0
+    
+    ModParWF(ts, B0, ppm_fat, ampl_fat, precession, n_coils, cov_mat, mode, x_sym, Δt)
+end
+
+"""
+    VP.check(pars::ModParWF)
+
+Throws an exception, if the fields in `pars` are defined inconsistently.
+"""
+function VP.check(pars::ModParWF)
+    @assert length(pars.ts) > 1
+    @assert pars.B0 > 0
+    @assert length(pars.ppm_fat) == length(pars.ampl_fat) > 0
+    @assert pars.precession ∈ [:clockwise, :counterclockwise]
+    @assert pars.n_coils == size(pars.cov_mat, 1) == size(pars.cov_mat, 2)
+    @assert pars.cov_mat' ≈ pars.cov_mat
+    @assert pars.mode ∈ [:auto_fat, :manual_fat]
+    sym = pars.mode == :auto_fat ? [:ϕ, :R2s] : [:ϕ, :R2s, :f]
+    @assert all(sy -> sy ∈ sym, pars.x_sym)
+    @assert pars.Δt ≥ 0.0
 end
 
 """
