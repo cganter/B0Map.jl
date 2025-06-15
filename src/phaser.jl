@@ -73,7 +73,7 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     # only GSS for PHASER
     optim = fitopt.optim
     fitopt.optim = false
-    
+
     # save original value
     n_ϕ = fitopt.n_ϕ
 
@@ -131,7 +131,7 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
 
     # restore fitpar and fitopt
     set_num_phase_intervals(fitpar, fitopt, n_ϕ)
-    
+
     fitopt.diagnostics ? (; to, ML, PHASER, S_PHASER) : (; to)
 end
 
@@ -310,9 +310,14 @@ Auxiliary routines
 ==================================================================  
 =#
 
+"""
+    subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+
+TBW
+"""
 function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     S = fitpar.S
-    
+
     fitopt.redundancy == Inf && return S
 
     S_PHASER = deepcopy(fitpar.S)
@@ -321,8 +326,6 @@ function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N
     fitopt.redundancy * Nfree(bs)
     Nsub = ceil(Int, min(fitopt.redundancy * Nfree(bs), 0.99typemax(Int)))
 
-    
-
     if N < ndims(S)
         @assert N == 2 && ndims(S) == 3 # what else? (we rely on that below)
         n_sl = size(S)[end]
@@ -330,10 +333,10 @@ function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N
         for j in 1:n_sl
             S_PHASER_sl = @views S_PHASER[:, :, j]
             S_sl = @views S[:, :, j]
-            calc_subsample_mask!(S_PHASER_sl, S_sl, Nsub, fitopt.rng)
+            calc_subsample_mask!(S_PHASER_sl, S_sl, Nsub, fitopt)
         end
     elseif N == ndims(S)
-        calc_subsample_mask!(S_PHASER, S, Nsub, fitopt.rng)
+        calc_subsample_mask!(S_PHASER, S, Nsub, fitopt)
     else
         error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
     end
@@ -346,50 +349,94 @@ end
 
 TBW
 """
-function calc_subsample_mask!(Ssub, S, Nsub, rng)
-    # set dimension
-    ndS = ndims(S)
+function calc_subsample_mask!(Ssub, S, Nsub, fitopt)
+    # check for correct setting
+    @assert fitopt.subsampling ∈ (:fibonacci, :random)
 
     # set index ranges 
     ciS = CartesianIndices(S)
     fiS, liS = first(ciS), last(ciS)
 
     # unit step in each direction
+    ndS, szS = ndims(S), size(S)
     ejs = [CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS)) for j in 1:ndS]
 
-    # initialize
+    # set Ssub equal to S except for last entries in each direction
+    # (required, since we take derivatives below)
     fill!(Ssub, false)
+    @views Ssub[fiS:(liS-fiS)] .= S[fiS:(liS-fiS)]
 
-    # determine subset of data points with direct neighbours in every direction
-    ej = ejs[1]
-
-    for iS in fiS:(liS-fiS)
-        S[iS] && S[iS+ej] && (Ssub[iS] = true)
+    # subset of S, from which derivatives in all directions can be taken
+    for ej in ejs
+        @views Ssub[fiS:(liS-fiS)] .&= S[fiS+ej:(liS-fiS+ej)]
     end
 
-    for ej in ejs[2:end]
-        for iS in fiS:liS-ej
-            !Ssub[iS] && continue
-            !(S[iS] && S[iS+ej]) && (Ssub[iS] = false)
-        end
-    end
-
-    # number of candidate locations
+    # this yields the number of candidate locations
     Ncand = @views sum(Ssub[S])
 
     # reduce mask, if possible
     if Nsub < Ncand
-        ciSca = CartesianIndices(Ssub)[Ssub]
-        iSubs = randperm(rng, Ncand)[1:Nsub]
+        if fitopt.subsampling == :fibonacci
+            # This approach reduces clustering, observed by conventional random sampling. 
+            # One way to do so would be something like Poisson disk sampling, but this is
+            # not easy to implement efficiently. We therefore use the multidimensional golden
+            # means sampling, as proposed by Peter G. Anderson:
+            # https://doi.org/10.1007/978-94-011-2058-6_1
 
-        Ssub[S] .= false
+            # candidate locations
+            Scand = deepcopy(Ssub)
 
-        for i in iSubs
-            ci = ciSca[i]
-            Ssub[ci] = true
-            for ej in ejs
-                Ssub[ci+ej] = true
+            # generate ndS-dimensional golden ratios
+            (x, _) = GSS(x -> abs(x * (x + 1)^ndS - 1), (0, 1), 1e-10)
+            z = [x * (x + 1)^n for n in 0:ndS-1]
+
+            # size of the mask (apart from the outermost lines)
+            szS1 = szS .- 1
+
+            # number of found locations
+            found = 0
+
+            # location to look at
+            loc = ones(ndS)
+            
+            # reset Ssub
+            fill!(Ssub, false)
+
+            # subsampling
+            while found < Nsub
+                # location to look at
+                loc = mod.(loc .+ z, 1)
+                iloc = ceil.(Int, loc .* szS1)
+                iloc[iloc .== 0] .= 1
+                iloc = min.(iloc, szS1)
+                ci = CartesianIndex(iloc...)
+                
+                if Scand[ci]
+                    Ssub[ci] = true
+
+                    for ej in ejs
+                        Ssub[ci+ej] = true
+                    end
+                    
+                    found += 1
+                end
             end
+        elseif fitopt.subsampling == :random
+            ciSca = CartesianIndices(Ssub)[Ssub]
+            iSubs = randperm(fitopt.rng, Ncand)[1:Nsub]
+            fill!(Ssub, false)
+
+            for i in iSubs
+                ci = ciSca[i]
+                
+                Ssub[ci] = true
+                
+                for ej in ejs
+                    Ssub[ci+ej] = true
+                end
+            end
+        else
+            error(string("Unsupported argument: fitopt.subsampling == ", fitopt.subsampling))
         end
     end
 end

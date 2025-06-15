@@ -76,6 +76,10 @@ Data structure holding the fit parameters.
 - `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
 ## PHASER only
 - `λ_tikh::Float`: (Small) Tikhonov regularization parameter
+- `K::Vector{Int}`: Fourier Kernel size
+- `os_fac::Vector{Float64}`: oversampling factor
+- `redundancy::Float64`: 
+- `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
 - `verbose::Bool`: Print information about what is actually done.
@@ -98,6 +102,7 @@ mutable struct FitOpt
     K::Vector{Int}
     os_fac::Vector{Float64}
     redundancy::Float64
+    subsampling::Symbol
     n_chunks::Int
     rng::MersenneTwister
     verbose::Bool
@@ -140,13 +145,14 @@ function fitOpt(ϕ_scale = 1.0)
     K = []
     os_fac = [2.0]
     redundancy = Inf
+    subsampling = :fibonacci
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
     verbose = false
     diagnostics = false
     accel = :mt
     FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, locfit, optim, autodiff, λ_tikh, K, 
-            os_fac, redundancy, n_chunks, rng, verbose, diagnostics, accel)
+            os_fac, redundancy, subsampling, n_chunks, rng, verbose, diagnostics, accel)
 end
 
 """
