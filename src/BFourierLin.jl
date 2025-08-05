@@ -1,4 +1,4 @@
-using Compat
+using Compat, FFTW
 @compat public BFourierLin, fourier_lin, Nρ, Nρ_orig, Nκ, Nν
 
 """
@@ -36,6 +36,7 @@ struct BFourierLin{N} <: BSmooth{N}
     ws_ρ::Array{Float64,N}
     ws_κ::Array{ComplexF64,N}
     ρνs::Vector{Array{Float64,N}}
+    Δρ::Vector{Float64}
 end
 
 """
@@ -122,12 +123,25 @@ function fourier_lin(Nρ_orig, K; os_fac=[1.0])
     ws_ρ = zeros(Float64, Nρ...)  # we only transform real functions from ρ → κ
     ws_κ = zeros(ComplexF64, Nρ...)
 
+    #=
     ρνs = [repeat(
         reshape(collect(range(-N / 2 + 0.5, N / 2 - 0.5, N)), ones(Int, j - 1)..., :),
         Nρ_orig[1:j-1]..., 1, Nρ_orig[j+1:end]...) for
            (j, N) in enumerate(Nρ_orig)]
+           
+    Δρ = [1.0 for _ in Nρ_orig]
+    =#
 
-    BFourierLin(Nρ, Nκ, Nν, K, Nρ_orig, κ, aκ, ciκ, ciκ_po, ciκ_ne, idx_po, idx_ne, ciκmκ0, ciκmκ, ciκpκ, ws_ρ, ws_κ, ρνs)
+    ρ_max = 1.0
+
+    ρνs = [repeat(
+        reshape(collect(range(- ρ_max, ρ_max, N)), ones(Int, j - 1)..., :),
+        Nρ_orig[1:j-1]..., 1, Nρ_orig[j+1:end]...) for
+           (j, N) in enumerate(Nρ_orig)]
+    
+    Δρ = [2ρ_max ./ (N - 1.0) for N in Nρ_orig]
+    
+    BFourierLin(Nρ, Nκ, Nν, K, Nρ_orig, κ, aκ, ciκ, ciκ_po, ciκ_ne, idx_po, idx_ne, ciκmκ0, ciκmκ, ciκpκ, ws_ρ, ws_κ, ρνs, Δρ)
 end
 
 """
@@ -280,14 +294,15 @@ function calc_∇Bt∇B(bf::BFourierLin, Sj::AbstractVector)
 
     for (ν, aκ_, Sj_) in zip(1:Nν(bf), bf.aκ, Sj)
         bf.ws_ρ .= 0.0
-        bf.ws_ρ[CartesianIndices(Sj_)] .= 1.0
+
+        bf.ws_ρ[CartesianIndices(Sj_)[Sj_]] .= 1.0
 
         FT_Sj = fft(bf.ws_ρ)
 
         ∇Bt∇B[1:nκ1, 1:nκ1] += @views aκ_[2:end] .* FT_Sj[bf.ciκmκ] .* aκ_[2:end]'
-        ∇Bt∇B[1:nκ1, nκ1+ν] = @views aκ_[2:end] .* FT_Sj[bf.ciκ[2:end]]
+        ∇Bt∇B[1:nκ1, nκ1+ν] = @views bf.Δρ[ν] .* aκ_[2:end] .* FT_Sj[bf.ciκ[2:end]]
         ∇Bt∇B[nκ1+ν, 1:nκ1] = @views conj.(∇Bt∇B[1:nκ1, nκ1+ν])
-        ∇Bt∇B[nκ1+ν, nκ1+ν] = sum(Sj_)
+        ∇Bt∇B[nκ1+ν, nκ1+ν] = bf.Δρ[ν]^2 * sum(Sj_)
     end
 
     return ∇Bt∇B
@@ -319,7 +334,7 @@ function calc_∇Btx(bf::BFourierLin, Sj::AbstractVector, x::AbstractVector)
         copyto!(bf.ws_ρ, CartesianIndices(x_), x_, CartesianIndices(x_))
 
         ∇Btx[1:nκ1] += @views (aκ_.*fft(bf.ws_ρ)[bf.ciκ])[2:end]
-        ∇Btx[nκ1+ν] = @views sum(x_[Sj_])
+        ∇Btx[nκ1+ν] = @views bf.Δρ[ν] * sum(x_[Sj_])
     end
 
     return ∇Btx
@@ -354,3 +369,9 @@ function phase_map(bf::BFourierLin, c::AbstractVector)
 
     return ϕ
 end
+
+#=
+function rescale_ρ!(bf::BFourierLin, S::AbstractArray)
+
+end
+=#

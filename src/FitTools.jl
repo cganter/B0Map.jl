@@ -1,5 +1,5 @@
 import VP4Optim as VP
-using ChunkSplitters, TimerOutputs, Random, Compat
+using ChunkSplitters, TimerOutputs, Random, StatsBase, Compat
 @compat public FitPar, fitPar, FitOpt, fitOpt, set_num_phase_intervals, calc_par
 
 """
@@ -73,6 +73,7 @@ Data structure holding the fit parameters.
 - `locfit::Bool`: Perform a final local fit, based upon PHASER.
 ## Local Fit only
 - `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
+- `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
 - `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
 ## PHASER only
 - `λ_tikh::Float`: (Small) Tikhonov regularization parameter
@@ -80,6 +81,7 @@ Data structure holding the fit parameters.
 - `os_fac::Vector{Float64}`: oversampling factor
 - `redundancy::Float64`: 
 - `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
+- `remove_outliers::Bool`: Try to eliminate outliers
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
 - `verbose::Bool`: Print information about what is actually done.
@@ -97,12 +99,14 @@ mutable struct FitOpt
     R2s_acc::Float64
     locfit::Bool
     optim::Bool
+    optim_phaser::Bool
     autodiff::Symbol
     λ_tikh::Float64
     K::Vector{Int}
     os_fac::Vector{Float64}
     redundancy::Float64
     subsampling::Symbol
+    remove_outliers::Bool
     n_chunks::Int
     rng::MersenneTwister
     verbose::Bool
@@ -124,6 +128,7 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `ϕ_acc == 1.e-4`
 - `R2s_acc == 1.e-4`
 - `optim == true`
+- `optim_phaser == false`
 - `autodiff == :finite`
 - `λ_tikh == 1.e-6`
 - `n_chunks == 8Threads.nthreads()`
@@ -140,19 +145,21 @@ function fitOpt(ϕ_scale = 1.0)
     R2s_acc = 1.e-4
     locfit = true
     optim = true
+    optim_phaser = false
     autodiff = :finite
     λ_tikh = 1.e-6
     K = []
     os_fac = [2.0]
     redundancy = Inf
     subsampling = :fibonacci
+    remove_outliers = true
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
     verbose = false
     diagnostics = false
     accel = :mt
-    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, locfit, optim, autodiff, λ_tikh, K, 
-            os_fac, redundancy, subsampling, n_chunks, rng, verbose, diagnostics, accel)
+    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, locfit, optim, optim_phaser, autodiff, λ_tikh, K, 
+            os_fac, redundancy, subsampling, remove_outliers, n_chunks, rng, verbose, diagnostics, accel)
 end
 
 """

@@ -1,4 +1,4 @@
-using LinearAlgebra, ChunkSplitters, FFTW, StatsBase, Optim, Random, TimerOutputs, Compat
+using LinearAlgebra, ChunkSplitters, StatsBase, Optim, Random, TimerOutputs, Compat
 import VP4Optim as VP
 @compat public BSmooth, calc, phase_map, phaser, smooth_projection!
 
@@ -60,45 +60,50 @@ Take the data set and do the analysis.
 ## What it does
 - First, a local fit is performed.
 - If a smooth basis `bs` is supplied, the result is refined by subspace-based regularization.
-- If `fitopt.locfit == true`, a final local fit based upon PHASER is performed.
+- If `fitopt.locfit == true`, a final local fit based upon PH is performed.
 ## Arguments
 - `fitpar::FitPar`: Fit parameters
 - `fitopt::FitOpt`: Fit options
-- `bs::BSmooth{N}`: Smooth subspace for PHASER
+- `bs::BSmooth{N}`: Smooth subspace for PH
 """
 function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     # timing will always be monitored
     to = TimerOutput()
 
-    # only GSS for PHASER
+    # nonlinear optimization for PH?
     optim = fitopt.optim
-    fitopt.optim = false
+    fitopt.optim = fitopt.optim_phaser
 
     # save original value
     n_ϕ = fitopt.n_ϕ
 
     # generate subsampled mask
-    @timeit to "subsample mask" S_PHASER = subsample_mask(fitpar, fitopt, bs)
+    @timeit to "subsample mask" S = subsample_mask(fitpar, fitopt, bs)
 
-    # do a local fit on S_PHASER only
+    # do a local fit on S_PH only
     S_orig = deepcopy(fitpar.S)
 
-    fitpar.S[:] .= S_PHASER[:]
+    fitpar.S[:] .= S[:]
 
     @timeit to "prep phaser" local_fit(fitpar, fitopt)
 
     # save the local fit results, if desired
     if fitopt.diagnostics
         ϕ, R2s, c, χ2 = deepcopy(fitpar.ϕ), deepcopy(fitpar.R2s), deepcopy(fitpar.c), deepcopy(fitpar.χ2)
-        ML = (; ϕ, R2s, c, χ2)
+        noS = (!).(S)
+        ML = (; ϕ, R2s, c, χ2, S, noS)
     end
 
-    # PHASER
+    # PH
+
+    # disable nonlinear optimization, when balancing local vs gradient based solution
+    fitopt.optim = false
+
     @timeit to "calc phaser" if N < ndims(fitpar.S)
         @assert N == 2 && ndims(fitpar.S) == 3 # what else? (we rely on that below)
         n_sl = size(fitpar.S)[end]
 
-        PHASER = []
+        PH = []
 
         for j in 1:n_sl
             data_sl = @views reshape(fitpar.data, size(fitpar.S)..., :)[:, :, j, :]
@@ -107,7 +112,7 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
             fitpar_sl.ϕ[:, :] .= @views fitpar.ϕ[:, :, j]
             S_orig_sl = @views S_orig[:, :, j]
 
-            push!(PHASER, pure_phaser(fitpar_sl, fitopt, bs, S_orig_sl))
+            push!(PH, pure_phaser(fitpar_sl, fitopt, bs, S_orig_sl))
 
             fitpar.ϕ[:, :, j] .= fitpar_sl.ϕ
             fitpar.R2s[:, :, j] .= fitpar_sl.R2s
@@ -115,7 +120,7 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
             fitpar.χ2[:, :, j] .= fitpar_sl.χ2
         end
     elseif N == ndims(fitpar.S)
-        PHASER = pure_phaser(fitpar, fitopt, bs, S_orig)
+        PH = pure_phaser(fitpar, fitopt, bs, S_orig)
     else
         error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
     end
@@ -125,14 +130,14 @@ function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     fitopt.optim = optim
 
     if fitopt.locfit
-        # repeat the local fit, based upon the PHASER ϕ
+        # repeat the local fit, based upon the PH ϕ
         @timeit to "local fit" local_fit(fitpar, fitopt)
     end
 
     # restore fitpar and fitopt
     set_num_phase_intervals(fitpar, fitopt, n_ϕ)
 
-    fitopt.diagnostics ? (; to, ML, PHASER, S_PHASER) : (; to)
+    fitopt.diagnostics ? (; to, ML, PH) : (; to)
 end
 
 """
@@ -155,77 +160,82 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig) whe
     @. z[S] = @views exp(im * ϕ[S])
 
     # ======================================================================
-    # Smooth phase map (linearized gradients)
+    # Gradient-based estimation
     # ======================================================================
 
-    @timeit to "lin. grad." begin
-        print("Smooth phase map (linearized gradients) ... ")
+    @timeit to "gradent-based estimate" begin
+        print("Gradient-based phase map ... ")
 
         # calculate local difference map ∇z and associated masks
         (y, Sj) = calc_y(z, S)
 
+        # calculate principle value of complex logarithm
+        ly = [zeros(ComplexF64, szS) for _ in 1:length(y)]
+        for (ly_, Sj_, y_) in zip(ly, Sj, y)
+            @. ly_[Sj_] = @views log(y_[Sj_] + 1)
+        end
+
+        # if desired, remove outliers from Sj
+        Sj_wo = Sj
+        ly_wo = ly
+        aily_hist = Histogram[]
+        aily_max = Float64[]
+        for (ly_, Sj_) in zip(ly, Sj)
+            # setting (2n)^(1/3) for the number bins in the histogram was motivated in 
+            # https://doi.org/10.2307/2288074
+            nbins = ceil(Int, (2 * sum(Sj_))^(1 / 3))
+            # store differences
+            aily = abs.(imag.(ly_[Sj_]))
+            # boundaries of bin intervals
+            edges = @views range(0.0, max(aily...), nbins + 1)
+            # median over Sj
+            med = @views median(aily)
+            # due to dimensional arguments, the median should be in the first peak (starting at zero)
+            # and should therefore not correspond to phase jumps at region boundaries
+            # the index iemin can therefore be used as a starting point
+            iemin = findfirst(e -> e > med, edges)
+            # generate the histogram curve based upon the bins defined above
+            push!(aily_hist, fit(Histogram, aily, edges))
+            # ideally, we want to fully include the first peak (related to actual ϕ variations) and 
+            # ignore any other peak(s) (associated with phase jumps)
+            # to do so, we search for the first index, when the |Δy| histogram starts to rise again
+            # (ideally, this should more or less lie well between the first two peaks)
+            fifi = @views findfirst(x -> x > 0, aily_hist[end].weights[iemin+1:end] - aily_hist[end].weights[iemin:end-1])
+            # define cutoff value
+            # (left edge of the bin, where the histogram has its first minimum)
+            push!(aily_max, edges[fifi+iemin-1])
+            
+            # remove outliers
+            if fitopt.remove_outliers
+                remove = aily .> aily_max[end]
+                ciSj = CartesianIndices(Sj_)[Sj_]
+                Sj_[ciSj[remove]] .= false
+                ly_[ciSj[remove]] .= 0.0
+            end
+        end
+
         # MPI estimate
         ∇Bt∇B = calc_∇Bt∇B(bs, Sj)
-        ∇Bty = calc_∇Btx(bs, Sj, imag.(y))
+        ∇Btly = calc_∇Btx(bs, Sj, imag.(ly))
         λ_tikh = fitopt.λ_tikh * mean(real.(diag(∇Bt∇B)))
-        c = (∇Bt∇B + λ_tikh * I) \ ∇Bty
 
-        # first guess of smooth phase map ...
+        c = (∇Bt∇B + λ_tikh * I) \ ∇Btly
+
+        # calculate phase map with median limited to (-π, π]
         ϕ_0 = zeros(szS)
         ϕ_0[S_orig] .= @views phase_map(bs, c)[S_orig]
 
-        # calculate generic global offset (for best match with phase factor z)
         calc_generic_offset!(ϕ_0, z, S, S_orig)
 
         # remaining deviations
         # since we now also look at local phase factors as such (instead on their gradients only)
         # we must be careful not to generate artificial jumps at phase wraps in the scaled map
         z_0 = ones(ComplexF64, szS)
-        @. z_0[S] = @views exp(im * ϕ_0[S])
-        Δz_0 = ones(ComplexF64, szS)
-        @. Δz_0[S] = @views z[S] / z_0[S]   # smooth at 2π phase wraps
+        @. z_0[S] = @views z[S] * exp(-im * ϕ_0[S])
         Δϕ_0 = zeros(szS)
-        @. Δϕ_0[S] = @views angle(Δz_0[S])
+        @. Δϕ_0[S] = @views angle(z_0[S])
 
-        Δy_0 = calc_y_(Δz_0, Sj)
-
-        println("done")
-    end
-
-    # ======================================================================
-    # Improved smooth phase map (correct gradients)
-    # ======================================================================
-
-    @timeit to "corr. grad." begin
-        print("Smooth phase map (correct gradients) ... ")
-
-        # to avoid linearization errors, we now use the logarithm of phase factor difference
-        # (assuming that the magnitude of the latter is < π/2!)
-        ly = [zeros(ComplexF64, szS) for _ in 1:length(Δy_0)]
-        for (ly_, Sj_, y_) in zip(ly, Sj, Δy_0)
-            @. ly_[Sj_] = @views log(y_[Sj_] + 1)
-        end
-
-        # MPI estimate
-        ∇Btly = calc_∇Btx(bs, Sj, imag.(ly))
-        c = (∇Bt∇B + λ_tikh * I) \ ∇Btly
-        ϕ_1 = zeros(szS)
-        ϕ_1[S_orig] .= @views ϕ_0[S_orig] .+ phase_map(bs, c)[S_orig]
-
-        # calculate generic global offset (for best match with phase factor z)
-        calc_generic_offset!(ϕ_1, z, S, S_orig)
-
-        # remaining deviations
-        # since we now also look at local phase factors as such (instead on their gradients only)
-        # we must be careful not to generate artificial jumps at phase wraps in the scaled map
-        z_1 = ones(ComplexF64, szS)
-        @. z_1[S] = @views exp(im * ϕ_1[S])
-        Δz_1 = ones(ComplexF64, szS)
-        @. Δz_1[S] = @views z[S] / z_1[S]   # smooth at 2π phase wraps
-        Δϕ_1 = zeros(szS)
-        @. Δϕ_1[S] = @views angle(Δz_1[S])
-
-        Δy_1 = calc_y_(Δz_1, Sj)
+        y_0 = calc_y_(z_0, Sj)
 
         println("done.")
     end
@@ -239,16 +249,18 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig) whe
 
         BtB = calc_BtB(bs, S)
 
-        lz = zeros(ComplexF64, szS)
-        @. lz[S] = @views log(Δz_1[S])
+        lz_0 = zeros(ComplexF64, szS)
+        @. lz_0[S] = @views log(z_0[S])
 
-        Btlz = calc_Btx(bs, S, imag.(lz))
+        Btlz = calc_Btx(bs, S, imag.(lz_0))
 
-        for (ly_, Sj_, y_) in zip(ly, Sj, Δy_1)
+        ly_0 = [zeros(ComplexF64, szS) for _ in 1:length(y)]
+
+        for (ly_, Sj_, y_) in zip(ly_0, Sj, y_0)
             @. ly_[Sj_] = @views log(y_[Sj_] + 1)
         end
 
-        ∇Btly = calc_∇Btx(bs, Sj, imag.(ly))
+        ∇Btly = calc_∇Btx(bs, Sj, imag.(ly_0))
 
         A, a, B, b = BtB, Btlz, ∇Bt∇B, ∇Btly
 
@@ -256,7 +268,7 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig) whe
         set_num_phase_intervals(fitparλ, fitopt, 0)
 
         λ_opt, χ2_opt, λs, χ2s = GSS(
-            χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_1), (0.0, 1.0), 1e-4; show_all=true)
+            χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_0), (0.0, 1.0), 1e-4; show_all=true)
 
         iλ = sortperm(λs)
         λs = λs[iλ]
@@ -265,7 +277,10 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig) whe
         # take the best match and calculate the solution on S_orig
         fitpar.S[:] .= S_orig[:]
 
-        χ2_λ_fun(fitpar, fitopt, bs, A, a, B, b, ϕ_1)(λ_opt)
+        χ2_λ_fun(fitpar, fitopt, bs, A, a, B, b, ϕ_0)(λ_opt)
+
+        # make sure that the phase median over S lies within [-π, π]
+        median_shift!(fitpar.ϕ, fitpar.S)
 
         println("done.")
     end
@@ -273,35 +288,36 @@ function pure_phaser(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, S_orig) whe
     # return diagnostic information, if desired
     if fitopt.diagnostics
         ϕ = deepcopy(ϕ)
-        (; to, ϕ, ϕ_0, ϕ_1, Δϕ_0, Δϕ_1, Δy_0, Δy_1, ly, lz, λ_opt, χ2_opt, λs, χ2s, y, Sj)
+        (; to, ϕ, ϕ_0, Δϕ_0, y_0, ly, ly_wo, lz_0, ly_0,
+            BtB, ∇Bt∇B, 
+            λ_opt, χ2_opt, λs, χ2s, y, Sj, Sj_wo, aily_hist, aily_max)
     else
         (; to)
     end
 end
 
 """
-    smooth_projection!(ϕ::AbstractArray, fitpar::FitPar, fitopt::FitOpt, bs::BSmooth)
+    smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; λ_tikh = 1e-6)
 
 Return projection of `ϕ` on smooth subspace, defined by `bs`.
 The required agreement is restricted to the mask `S`.
 """
-function smooth_projection!(ϕ::AbstractArray, fitpar::FitPar, fitopt::FitOpt, bs::BSmooth)
+function smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; λ_tikh=1e-6)
     # check that size is ok
-    @assert size(ϕ) == size(fitpar.S)
+    @assert size(ϕ) == size(S)
 
     # prepare Moore-Penrose pseudoinverse
-    BtB = BtB(bs, fitpar.S)
-    Btϕ = Btx(bs, fitpar.S, ϕ)
+    BtB = calc_BtB(bs, S)
+    Btϕ = calc_Btx(bs, S, ϕ)
 
     # Calculate the Moore-Penrose inverse.
     # To address potential ill-posedness of the matrix ∇Bt∇B, we make use of Tikhonov regularization.
     # The resulting bias, as long as not extremely large, should not affect the subsequent refinement step.
-    λ_tikh = fitopt.λ_tikh * mean(real.(diag(BtB)))
-    c_mpi = (BtB .+ λ_tikh .* I) \ Btϕ
+    λ_tikh *= mean(real.(diag(BtB)))
+    c_mpi = (BtB + λ_tikh .* I) \ Btϕ
 
     # calculate phase maps for b == 0
-    fill!(fitpar.ϕ, 0.0)
-    fitpar.ϕ[fitpar.S] = @views phase_map(bs, real(c_mpi[1]), c_mpi[2:end])[fitpar.S]
+    ϕ[S] = @views phase_map(bs, real(c_mpi[1]), c_mpi[2:end])[S]
 end
 
 #= 
@@ -320,7 +336,7 @@ function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N
 
     fitopt.redundancy == Inf && return S
 
-    S_PHASER = deepcopy(fitpar.S)
+    S_PH = deepcopy(S)
 
     # target number of locations in mask, which contain a derivative in every direction
     fitopt.redundancy * Nfree(bs)
@@ -331,17 +347,17 @@ function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N
         n_sl = size(S)[end]
 
         for j in 1:n_sl
-            S_PHASER_sl = @views S_PHASER[:, :, j]
+            S_PH_sl = @views S_PH[:, :, j]
             S_sl = @views S[:, :, j]
-            calc_subsample_mask!(S_PHASER_sl, S_sl, Nsub, fitopt)
+            calc_subsample_mask!(S_PH_sl, S_sl, Nsub, fitopt)
         end
     elseif N == ndims(S)
-        calc_subsample_mask!(S_PHASER, S, Nsub, fitopt)
+        calc_subsample_mask!(S_PH, S, Nsub, fitopt)
     else
         error(string("N == ", N, " and ndims(data) == ", ndims(fitpar.S), " not supported."))
     end
 
-    S_PHASER
+    S_PH
 end
 
 """
@@ -398,7 +414,7 @@ function calc_subsample_mask!(Ssub, S, Nsub, fitopt)
 
             # location to look at
             loc = ones(ndS)
-            
+
             # reset Ssub
             fill!(Ssub, false)
 
@@ -407,17 +423,17 @@ function calc_subsample_mask!(Ssub, S, Nsub, fitopt)
                 # location to look at
                 loc = mod.(loc .+ z, 1)
                 iloc = ceil.(Int, loc .* szS1)
-                iloc[iloc .== 0] .= 1
+                iloc[iloc.==0] .= 1
                 iloc = min.(iloc, szS1)
                 ci = CartesianIndex(iloc...)
-                
+
                 if Scand[ci]
                     Ssub[ci] = true
 
                     for ej in ejs
                         Ssub[ci+ej] = true
                     end
-                    
+
                     found += 1
                 end
             end
@@ -428,9 +444,9 @@ function calc_subsample_mask!(Ssub, S, Nsub, fitopt)
 
             for i in iSubs
                 ci = ciSca[i]
-                
+
                 Ssub[ci] = true
-                
+
                 for ej in ejs
                     Ssub[ci+ej] = true
                 end
@@ -466,6 +482,34 @@ function calc_generic_offset!(ϕ, z, S, S_orig)
 
     # add offset to ϕ
     @. ϕ[S_orig] += b
+
+    # return offset
+    b
+end
+
+"""
+    median_shift!(ϕ, S)
+
+TBW
+"""
+function median_shift!(ϕ, S)
+    # calculate the median of ϕ over S
+    ϕ_med = @views median(ϕ[S])
+    b = 0.0
+
+    # limit the median phase to [-π,π]
+    while ϕ_med > π
+        ϕ_med -= 2π
+        b -= 2π
+    end
+
+    while ϕ_med < -π
+        ϕ_med += 2π
+        b += 2π
+    end
+
+    # add offset to ϕ
+    @. ϕ[S] += b
 
     # return offset
     b
@@ -624,7 +668,7 @@ end
 
 TBW
 """
-function χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_1)
+function χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_0)
     λ -> begin
         @assert λ ≠ 0
 
@@ -634,7 +678,7 @@ function χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_1)
         vec_λ = λ .* a
         @. vec_λ[2:end] += (1 - λ) * b
         c = (mat_λ + λ_tikh * I) \ vec_λ
-        fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end])[fitparλ.S] .+ ϕ_1[fitparλ.S]
+        fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end])[fitparλ.S] .+ ϕ_0[fitparλ.S]
 
         local_fit(fitparλ, fitopt)
         sum(fitparλ.χ2[fitparλ.S])
