@@ -113,7 +113,7 @@ function local_fit_chunk(gre, fitpar, fitopt, cis_chunk, full_optim)
                 ux = [fitpar.ϕ[ci] + fitopt.Δϕ2, fitopt.R2s_rng[2]]
 
                 # search for optimum
-                if max_derivative(gre[2]) > 0 
+                if max_derivative(gre[2]) > 0
                     res = optimize(Optim.only_fg!(VP.fg!(gre[2])), lx, ux, x0, Fminbox(LBFGS()))
                 else
                     res = optimize(VP.f(gre[2]), lx, ux, x0, Fminbox(LBFGS()); autodiff=fitopt.autodiff)
@@ -267,5 +267,13 @@ function GSS(fun::Function, var_rng, acc; show_all=false)
     # return best result
     best_result = f_c < f_d ? (c, f_c) : (d, f_d)
 
-    return show_all ? (best_result..., xs, fs) : best_result
+    if show_all
+        ix = sortperm(xs)
+        xs = xs[ix]
+        fs = fs[ix]
+
+        return (best_result..., xs, fs)
+    else
+        return best_result
+    end
 end

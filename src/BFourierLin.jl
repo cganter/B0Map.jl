@@ -1,4 +1,4 @@
-using Compat, FFTW
+using Compat, FFTW, TimerOutputs
 @compat public BFourierLin, fourier_lin, Nρ, Nρ_orig, Nκ, Nν
 
 """
@@ -123,25 +123,18 @@ function fourier_lin(Nρ_orig, K; os_fac=[1.0])
     ws_ρ = zeros(Float64, Nρ...)  # we only transform real functions from ρ → κ
     ws_κ = zeros(ComplexF64, Nρ...)
 
-    #=
-    ρνs = [repeat(
-        reshape(collect(range(-N / 2 + 0.5, N / 2 - 0.5, N)), ones(Int, j - 1)..., :),
-        Nρ_orig[1:j-1]..., 1, Nρ_orig[j+1:end]...) for
-           (j, N) in enumerate(Nρ_orig)]
-           
-    Δρ = [1.0 for _ in Nρ_orig]
-    =#
-
-    ρ_max = 1.0
+    ρ_max = 2.0
 
     ρνs = [repeat(
-        reshape(collect(range(- ρ_max, ρ_max, N)), ones(Int, j - 1)..., :),
+        reshape(collect(range(-ρ_max, ρ_max, N)), ones(Int, j - 1)..., :),
         Nρ_orig[1:j-1]..., 1, Nρ_orig[j+1:end]...) for
            (j, N) in enumerate(Nρ_orig)]
-    
+
     Δρ = [2ρ_max ./ (N - 1.0) for N in Nρ_orig]
-    
-    BFourierLin(Nρ, Nκ, Nν, K, Nρ_orig, κ, aκ, ciκ, ciκ_po, ciκ_ne, idx_po, idx_ne, ciκmκ0, ciκmκ, ciκpκ, ws_ρ, ws_κ, ρνs, Δρ)
+
+    BFourierLin(Nρ, Nκ, Nν, K, Nρ_orig,
+        κ, aκ, ciκ, ciκ_po, ciκ_ne, idx_po, idx_ne, ciκmκ0, ciκmκ, ciκpκ,
+        ws_ρ, ws_κ, ρνs, Δρ)
 end
 
 """
@@ -149,7 +142,7 @@ end
 
 Calculate dimension of smooth subspace (== number of free (real) parameters).
 """
-function Nfree(bf::BFourierLin{N}) where N 
+function Nfree(bf::BFourierLin{N}) where N
     2N + prod(2 .* bf.K .+ 1)
 end
 
@@ -197,6 +190,26 @@ function Nν(bf::BFourierLin)
 end
 
 """
+    calc_Bc(bf::BFourierLin, c::AbstractVector)
+
+TBW
+"""
+function calc_Bc(bf::BFourierLin, c::AbstractVector, to::TimerOutput=TimerOutput())
+    @timeit to "calc_Bc" begin
+        bf.ws_κ .= zero(ComplexF64)
+        nκ = prod(Nκ(bf))
+        bf.ws_κ[bf.ciκ] = c[1:nκ]
+
+        Bc = @views real.(bfft(bf.ws_κ)[(1:n for n in bf.Nρ_orig)...])
+        for ν in 1:Nν(bf)
+            Bc += real.(bf.ρνs[ν] .* c[nκ+ν])
+        end
+    end
+
+    return Bc
+end
+
+"""
     calc_BtB(bf::BFourierLin, S::AbstractArray)
 
 Return matrix for Moore Penrose inversion (MPI).
@@ -211,28 +224,29 @@ Return matrix for Moore Penrose inversion (MPI).
 - The function returns the matrix ``\\mathrm{B}^\\ast\\mathrm{P}_S\\mathrm{B}``.
 - ``\\mathrm{P}_S`` projects on the subspace ``\\mathrm{\\rho}\\in S``.
 """
-function calc_BtB(bf::BFourierLin, S::AbstractArray)
-    nκ = prod(Nκ(bf))
+function calc_BtB(bf::BFourierLin, S::AbstractArray, to::TimerOutput=TimerOutput())
+    @timeit to "calc_BtB" begin
+        nκ = prod(Nκ(bf))
 
-    cis = @views CartesianIndices(S)[S]
+        bf.ws_ρ .= 0.0
+        cis = @views CartesianIndices(S)[S]
+        bf.ws_ρ[cis] .= 1.0
 
-    bf.ws_ρ .= 0.0
-    bf.ws_ρ[cis] .= 1.0
+        BtB = zeros(ComplexF64, nκ + Nν(bf), nκ + Nν(bf))
+        BtB[1:nκ, 1:nκ] = @views fft(bf.ws_ρ)[bf.ciκmκ0]
 
-    BtB = zeros(ComplexF64, nκ + Nν(bf), nκ + Nν(bf))
-    BtB[1:nκ, 1:nκ] = @views fft(bf.ws_ρ)[bf.ciκmκ0]
+        bf.ws_ρ .= 0.0
+        for j in 1:Nν(bf)
+            bf.ws_ρ[cis] .= @views bf.ρνs[j][S]
+            BtB[1:nκ, nκ+j] = @views vec(fft(bf.ws_ρ)[bf.ciκ])
+            BtB[nκ+j, 1:nκ] = @views conj.(BtB[1:nκ, nκ+j])
+        end
 
-    bf.ws_ρ .= 0.0
-    for j in 1:Nν(bf)
-        bf.ws_ρ[cis] .= @views bf.ρνs[j][S]
-        BtB[1:nκ, nκ+j] = @views vec(fft(bf.ws_ρ)[bf.ciκ])
-        BtB[nκ+j, 1:nκ] = @views conj.(BtB[1:nκ, nκ+j])
-    end
-
-    for i in 1:Nν(bf)
-        for j in 1:i
-            BtB[nκ+i, nκ+j] = @views sum(bf.ρνs[i][S] .* bf.ρνs[j][S])
-            i != j && (BtB[nκ+j, nκ+i] = BtB[nκ+i, nκ+j])
+        for i in 1:Nν(bf)
+            for j in 1:i
+                BtB[nκ+i, nκ+j] = @views sum(bf.ρνs[i][S] .* bf.ρνs[j][S])
+                i != j && (BtB[nκ+j, nκ+i] = BtB[nκ+i, nκ+j])
+            end
         end
     end
 
@@ -255,21 +269,44 @@ Return vector for Moore Penrose inversion (MPI).
 - The function returns the vector ``\\mathrm{B}^\\ast\\mathrm{P}_S\\mathrm{x}``.
 - ``\\mathrm{P}_S`` projects on the subspace ``\\mathrm{\\rho}\\in S``.
 """
-function calc_Btx(bf::BFourierLin, S::AbstractArray, x::AbstractArray)
-    nκ = prod(Nκ(bf))
+function calc_Btx(bf::BFourierLin, S::AbstractArray, x::AbstractArray, to::TimerOutput=TimerOutput())
+    @timeit to "calc_Btx" begin
+        nκ = prod(Nκ(bf))
 
-    cis = @views CartesianIndices(S)[S]
+        bf.ws_ρ .= 0.0
+        cis = @views CartesianIndices(S)[S]
+        bf.ws_ρ[cis] .= @views x[cis]
 
-    bf.ws_ρ .= 0.0
-    bf.ws_ρ[cis] .= @views x[cis]
-
-    Btx = zeros(ComplexF64, nκ + Nν(bf))
-    Btx[1:nκ] .= @views vec(fft(bf.ws_ρ)[bf.ciκ])
-    for j in 1:Nν(bf)
-        Btx[nκ+j] = @views sum(bf.ρνs[j][S] .* x[S])
+        Btx = zeros(ComplexF64, nκ + Nν(bf))
+        Btx[1:nκ] .= @views vec(fft(bf.ws_ρ)[bf.ciκ])
+        for j in 1:Nν(bf)
+            Btx[nκ+j] = @views sum(bf.ρνs[j][S] .* x[S])
+        end
     end
 
     return Btx
+end
+
+"""
+    calc_∇Bc(bf::BFourierLin, c::AbstractVector)
+
+TBW
+"""
+function calc_∇Bc(bf::BFourierLin, c::AbstractVector, to::TimerOutput=TimerOutput())
+    @timeit to "calc_∇Bc" begin
+        bf.ws_κ .= zero(ComplexF64)
+        nκ1 = prod(Nκ(bf)) - 1
+
+        ∇Bc = [zeros(Float64, bf.Nρ_orig) for _ in 1:Nν(bf)]
+
+        for (ν, aκ_) in zip(1:Nν(bf), bf.aκ)
+            bf.ws_κ[bf.ciκ[2:end]] = @views conj.(aκ_[2:end]) .* c[1:nκ1]
+            ∇Bc[ν] += @views real.(bfft(bf.ws_κ)[(1:n for n in bf.Nρ_orig)...])
+            ∇Bc[ν] .+= real(bf.Δρ[ν] * c[nκ1+ν])
+        end
+    end
+
+    return ∇Bc
 end
 
 """
@@ -287,22 +324,23 @@ Return matrix for derivative-based Moore Penrose inversion (MPI).
 - The function returns the matrix ``\\mathrm{\\nabla B}^\\ast\\mathrm{P}_S\\mathrm{\\nabla B}``.
 - ``\\mathrm{P}_S`` projects on the subspace ``\\mathrm{\\rho}\\in S``.
 """
-function calc_∇Bt∇B(bf::BFourierLin, Sj::AbstractVector)
-    nκ1 = prod(Nκ(bf)) - 1
+function calc_∇Bt∇B(bf::BFourierLin, Sj::AbstractVector, to::TimerOutput=TimerOutput())
+    @timeit to "calc_∇Bt∇B" begin
+        nκ1 = prod(Nκ(bf)) - 1
 
-    ∇Bt∇B = zeros(ComplexF64, nκ1 + Nν(bf), nκ1 + Nν(bf))
+        ∇Bt∇B = zeros(ComplexF64, nκ1 + Nν(bf), nκ1 + Nν(bf))
 
-    for (ν, aκ_, Sj_) in zip(1:Nν(bf), bf.aκ, Sj)
-        bf.ws_ρ .= 0.0
+        for (ν, aκ_, Sj_) in zip(1:Nν(bf), bf.aκ, Sj)
+            bf.ws_ρ .= 0.0
+            bf.ws_ρ[CartesianIndices(Sj_)[Sj_]] .= 1.0
 
-        bf.ws_ρ[CartesianIndices(Sj_)[Sj_]] .= 1.0
+            FT_Sj = fft(bf.ws_ρ)
 
-        FT_Sj = fft(bf.ws_ρ)
-
-        ∇Bt∇B[1:nκ1, 1:nκ1] += @views aκ_[2:end] .* FT_Sj[bf.ciκmκ] .* aκ_[2:end]'
-        ∇Bt∇B[1:nκ1, nκ1+ν] = @views bf.Δρ[ν] .* aκ_[2:end] .* FT_Sj[bf.ciκ[2:end]]
-        ∇Bt∇B[nκ1+ν, 1:nκ1] = @views conj.(∇Bt∇B[1:nκ1, nκ1+ν])
-        ∇Bt∇B[nκ1+ν, nκ1+ν] = bf.Δρ[ν]^2 * sum(Sj_)
+            ∇Bt∇B[1:nκ1, 1:nκ1] += @views aκ_[2:end] .* FT_Sj[bf.ciκmκ] .* aκ_[2:end]'
+            ∇Bt∇B[1:nκ1, nκ1+ν] = @views bf.Δρ[ν] .* aκ_[2:end] .* FT_Sj[bf.ciκ[2:end]]
+            ∇Bt∇B[nκ1+ν, 1:nκ1] = @views conj.(∇Bt∇B[1:nκ1, nκ1+ν])
+            ∇Bt∇B[nκ1+ν, nκ1+ν] = bf.Δρ[ν]^2 * sum(Sj_)
+        end
     end
 
     return ∇Bt∇B
@@ -324,17 +362,22 @@ Return vector for derivative-based Moore Penrose inversion (MPI).
 - The function returns the vector ``\\mathrm{\\nabla B}^\\ast\\mathrm{P}_S\\mathrm{x}``.
 - ``\\mathrm{P}_S`` projects on the subspace ``\\mathrm{\\rho}\\in S``.
 """
-function calc_∇Btx(bf::BFourierLin, Sj::AbstractVector, x::AbstractVector)
-    nκ1 = prod(Nκ(bf)) - 1
+function calc_∇Btx(bf::BFourierLin, Sj::AbstractVector, x::AbstractVector, to::TimerOutput=TimerOutput())
+    @timeit to "calc_∇Btx" begin
+        nκ1 = prod(Nκ(bf)) - 1
 
-    ∇Btx = zeros(ComplexF64, nκ1 + Nν(bf))
-    bf.ws_ρ .= 0.0
+        ∇Btx = zeros(ComplexF64, nκ1 + Nν(bf))
 
-    for (ν, aκ_, Sj_, x_) in zip(1:Nν(bf), bf.aκ, Sj, x)
-        copyto!(bf.ws_ρ, CartesianIndices(x_), x_, CartesianIndices(x_))
+        for (ν, aκ_, Sj_, x_) in zip(1:Nν(bf), bf.aκ, Sj, x)
+            bf.ws_ρ .= 0.0
+            cis = @views CartesianIndices(Sj_)[Sj_]
+            bf.ws_ρ[cis] .= @views x_[cis]
 
-        ∇Btx[1:nκ1] += @views (aκ_.*fft(bf.ws_ρ)[bf.ciκ])[2:end]
-        ∇Btx[nκ1+ν] = @views bf.Δρ[ν] * sum(x_[Sj_])
+            #copyto!(bf.ws_ρ, CartesianIndices(x_), x_, CartesianIndices(x_))
+
+            ∇Btx[1:nκ1] += @views (aκ_.*fft(bf.ws_ρ)[bf.ciκ])[2:end]
+            ∇Btx[nκ1+ν] = @views bf.Δρ[ν] * sum(x_[Sj_])
+        end
     end
 
     return ∇Btx
@@ -357,14 +400,16 @@ The dimensions of the phase map correspond to the original dimensions `Nρ_orig`
 
 - Phase map [rad] as an array of dimension `Nρ_orig`. Also returns estimates for `ρ ∉ S`
 """
-function phase_map(bf::BFourierLin, c::AbstractVector)
-    bf.ws_κ .= zero(ComplexF64)
-    nκ1 = prod(Nκ(bf)) - 1
-    bf.ws_κ[bf.ciκ] = [0; c[1:nκ1]]
+function phase_map(bf::BFourierLin, c::AbstractVector, to::TimerOutput=TimerOutput())
+    @timeit to "phase map" begin
+        bf.ws_κ .= zero(ComplexF64)
+        nκ1 = prod(Nκ(bf)) - 1
+        bf.ws_κ[bf.ciκ] = [0; c[1:nκ1]]
 
-    ϕ = @views real.(bfft(bf.ws_κ)[(1:n for n in bf.Nρ_orig)...])
-    for ν in 1:Nν(bf)
-        ϕ += bf.ρνs[ν] .* real.(c[nκ1+ν])
+        ϕ = @views real.(bfft(bf.ws_κ)[(1:n for n in bf.Nρ_orig)...])
+        for ν in 1:Nν(bf)
+            ϕ += bf.ρνs[ν] .* real.(c[nκ1+ν])
+        end
     end
 
     return ϕ

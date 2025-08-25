@@ -91,11 +91,11 @@ Label(fig[1, 1, TopLeft()], "A",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([32],[18],[0],[20],color=:lime)
-arrows!([230],[120],[0],[-20],color=:lime)
-arrows!([105],[40],[0],[15],color=:white)
-arrows!([164],[38],[0],[15],color=:white)
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([32],[18],[0],[20],color=:lime)
+arrows2d!([230],[120],[0],[-20],color=:lime)
+arrows2d!([105],[40],[0],[15],color=:white)
+arrows2d!([164],[38],[0],[15],color=:white)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 ax = Axis(fig[1, 2],
     title=L"$\varphi_{RW}$",
@@ -113,11 +113,11 @@ Label(fig[1, 2, TopLeft()], "B",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([105],[40],[0],[15],color=:white)
-arrows!([164],[38],[0],[15],color=:white)
-arrows!([68],[115],[15],[-8],color=:orange)
-arrows!([195],[115],[-15],[-8],color=:orange)
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([105],[40],[0],[15],color=:white)
+arrows2d!([164],[38],[0],[15],color=:white)
+arrows2d!([68],[115],[15],[-8],color=:orange)
+arrows2d!([195],[115],[-15],[-8],color=:orange)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 ax = Axis(fig[1, 3],
     title=L"$\varphi_{FC}$",
@@ -135,7 +135,7 @@ Label(fig[1, 3, TopLeft()], "C",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 Colorbar(fig[1, 4],
     colorrange=(-π, π),
@@ -164,11 +164,11 @@ Label(fig[2, 1, TopLeft()], "D",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([32],[18],[0],[20],color=:lime)
-arrows!([230],[120],[0],[-20],color=:lime)
-arrows!([105],[40],[0],[15],color=:white)
-arrows!([164],[38],[0],[15],color=:white)
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([32],[18],[0],[20],color=:lime)
+arrows2d!([230],[120],[0],[-20],color=:lime)
+arrows2d!([105],[40],[0],[15],color=:white)
+arrows2d!([164],[38],[0],[15],color=:white)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 ax = Axis(fig[2, 2],
     title=L"$f_{RW}$",
@@ -186,11 +186,11 @@ Label(fig[2, 2, TopLeft()], "E",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([105],[40],[0],[15],color=:white)
-arrows!([164],[38],[0],[15],color=:white)
-arrows!([68],[115],[15],[-8],color=:orange)
-arrows!([195],[115],[-15],[-8],color=:orange)
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([105],[40],[0],[15],color=:white)
+arrows2d!([164],[38],[0],[15],color=:white)
+arrows2d!([68],[115],[15],[-8],color=:orange)
+arrows2d!([195],[115],[-15],[-8],color=:orange)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 ax = Axis(fig[2, 3],
     title=L"$f_{FC}$",
@@ -209,7 +209,7 @@ Label(fig[2, 3, TopLeft()], "F",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 Colorbar(fig[2, 4],
     colorrange=(0, 1),
@@ -238,11 +238,11 @@ Label(fig[3, 1, TopLeft()], "G",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([32],[18],[0],[20],color=:lime)
-arrows!([230],[120],[0],[-20],color=:lime)
-arrows!([105],[40],[0],[15],color=:white)
-arrows!([164],[38],[0],[15],color=:white)
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([32],[18],[0],[20],color=:lime)
+arrows2d!([230],[120],[0],[-20],color=:lime)
+arrows2d!([105],[40],[0],[15],color=:white)
+arrows2d!([164],[38],[0],[15],color=:white)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 ax = Axis(fig[3, 2],
     title=L"$R^\ast_{2,RW}$",
@@ -260,11 +260,11 @@ Label(fig[3, 2, TopLeft()], "H",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([105],[40],[0],[15],color=:white)
-arrows!([164],[38],[0],[15],color=:white)
-arrows!([68],[115],[15],[-8],color=:orange)
-arrows!([195],[115],[-15],[-8],color=:orange)
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([105],[40],[0],[15],color=:white)
+arrows2d!([164],[38],[0],[15],color=:white)
+arrows2d!([68],[115],[15],[-8],color=:orange)
+arrows2d!([195],[115],[-15],[-8],color=:orange)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 ax = Axis(fig[3, 3],
     title=L"$R^\ast_{2,FC}$",
@@ -283,7 +283,7 @@ Label(fig[3, 3, TopLeft()], "I",
     padding=(0, -20, 5, 0),
     halign=:right)
 
-arrows!([248],[5],[0],[20],color=:red)
+arrows2d!([248],[5],[0],[20],color=:red)
 
 Colorbar(fig[3, 4],
     colorrange=(0,R2s_max),

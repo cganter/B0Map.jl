@@ -543,10 +543,10 @@ end
     ismrm_challenge(
     greType::Type{<:BM.AbstractGREMultiEcho},
     fitopt::BM.FitOpt;
-    fit,
     data_set::Int,
-    ic_dir="test/data/ISMRM_challenge_2012/")
-
+    ic_dir="test/data/ISMRM_challenge_2012/",
+    nTE=0)
+    
 TBW
 """
 function ismrm_challenge(

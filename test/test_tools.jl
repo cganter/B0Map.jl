@@ -60,7 +60,7 @@ mutable struct SimPhaPar
     locfit::Bool
     optim::Bool
     optim_phaser::Bool
-    λ_tikh::Float64
+    μ_tikh::Float64
     # miscellaneous settings
     n_chunks::Int
     rng::MersenneTwister
@@ -124,7 +124,7 @@ function SimPhaPar()
     locfit = true
     optim = true
     optim_phaser = false
-    λ_tikh = 100eps()
+    μ_tikh = 100eps()
     # miscellaneous settings
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
@@ -138,7 +138,7 @@ function SimPhaPar()
         S_zc, ϕ_zc, R2s_zc, f_zc, coils_zc,
         S_holes, S_io,
         ϕ_proj, ϕ_med,
-        redundancy, subsampling, remove_outliers, locfit, optim, optim_phaser, λ_tikh, n_chunks, rng
+        redundancy, subsampling, remove_outliers, locfit, optim, optim_phaser, μ_tikh, n_chunks, rng
     )
 end
 
@@ -246,7 +246,7 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
 
     if spp.ϕ_proj
         bs_pha = BM.fourier_lin(spp.Nρ, K_pha; os_fac=os_fac_pha)
-        BM.smooth_projection!(ϕ, S, bs_pha; λ_tikh=spp.λ_tikh)
+        BM.smooth_projection!(ϕ, S, bs_pha; μ_tikh=spp.μ_tikh)
     end
 
     ϕ[S] .+= @views spp.ϕ_med - median(ϕ[S])
@@ -378,7 +378,7 @@ function simulate_phantom(spp::SimPhaPar)
     fitopt.optim = spp.optim
     fitopt.optim_phaser = spp.optim_phaser
     fitopt.os_fac = spp.os_fac
-    fitopt.λ_tikh = spp.λ_tikh
+    fitopt.μ_tikh = spp.μ_tikh
     fitopt.rng = spp.rng
     fitopt.diagnostics = true
 
@@ -390,29 +390,29 @@ function simulate_phantom(spp::SimPhaPar)
 
     # ------------ preparing results ------------
 
-    ML = rp.ML
     PH = rp.PH
     to = rp.to
 
     noS = phantom.noS
+    noS_ML = (!).(PH.S)
 
-    ML.ϕ[ML.noS] .= NaN
+    PH.ϕ_ML[noS_ML] .= NaN
 
     PH.ϕ[noS] .= NaN
     PH.ϕ_0[noS] .= NaN
     PH.Δϕ_0[noS] .= NaN
-    PH.lz_0[noS] .= NaN
+    PH.ilz_0[noS] .= NaN
 
     noSj = [(!).(PH.Sj[j]) for j in 1:2]
     for j in 1:2
         PH.y[j][noSj[j]] .= NaN
-        PH.ly[j][noSj[j]] .= NaN
-        PH.ly_0[j][noSj[j]] .= NaN
+        PH.u[j][noSj[j]] .= NaN
+        PH.u_0[j][noSj[j]] .= NaN
     end
 
     fitpar.ϕ[noS] .= NaN
 
     # ------------ return everything ------------
 
-    (; phantom, fitpar, fitopt, bs, ML, PH, to)
+    (; phantom, fitpar, fitopt, bs, PH, to)
 end
