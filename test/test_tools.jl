@@ -386,7 +386,7 @@ function simulate_phantom(spp::SimPhaPar)
     bs = BM.fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
 
     # apply PHASER
-    rp = BM.phaser(fitpar, fitopt, bs)
+    rp = BM.phaser!(fitpar, fitopt, bs)
 
     # ------------ preparing results ------------
 

@@ -53,9 +53,9 @@ no generic implementation is provided.
 function phase_map(::BSmooth, ::AbstractVector) end
 
 """
-    phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+    phaser!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
 
-Take the data set and do the analysis.
+Take the data set and apply the PHASER algorithm.
 
 ## What it does
 - First, a local fit is performed.
@@ -66,7 +66,7 @@ Take the data set and do the analysis.
 - `fitopt::FitOpt`: Fit options
 - `bs::BSmooth{N}`: Smooth subspace for PH
 """
-function phaser(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+function phaser!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
     # timing will always be monitored
     to = TimerOutput()
 
@@ -248,7 +248,6 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             # MPI estimate
             ∇Bt∇B = calc_∇Bt∇B(bs, Sj, to)
             ∇Btu = calc_∇Btx(bs, Sj, u, to)
-            #μ_tikh = fitopt.μ_tikh #* max(real.(diag(∇Bt∇B))...)
 
             ∇Bt∇B_c = calc_∇Bt∇B(bs, Sj_c, to)
             ∇Btu_c = calc_∇Btx(bs, Sj_c, u_c, to)
@@ -329,6 +328,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
 
                 fitparλ = fitPar(fitpar.grePar, fitpar.data, S)
                 fitoptλ = deepcopy(fitopt)
+                fitoptλ.optim = fitopt.optim_balance
                 set_num_phase_intervals(fitparλ, fitoptλ, 0)
 
                 tikh_λ = NamedTuple[]
@@ -364,11 +364,31 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         BtB = BtB_c = BtB_t = ilz0 = u0 =
             λ_opt = χ2_opt = λs = χ2s = tikh_λ = nothing
     end
+    
+    # Save the PHASER map
+    ϕ = deepcopy(fitpar.ϕ)
+
+    # ======================================================================
+    # Final local fit, if desired
+    # ======================================================================
+
+    if fitopt.locfit
+        @timeit to "final local fit" begin
+            fitopt_loc = deepcopy(fitopt)
+            set_num_phase_intervals(fitpar, fitopt_loc, 0)
+            
+            local_fit(fitpar, fitopt_loc)
+            
+            ϕ_loc = fitpar.ϕ
+            R2s_loc = fitpar.R2s
+        end
+    else
+        ϕ_loc = R2s_loc = nothing
+    end
 
     # return diagnostic information, if desired
     if fitopt.diagnostics
-        ϕ = deepcopy(fitpar.ϕ)
-        (; ϕ_ML, R2s_ML, c_ML, χ2_ML,
+        (; ϕ_ML, R2s_ML, c_ML, χ2_ML, ϕ_loc, R2s_loc,
             ϕ, ϕ0, Δϕ0, y0, u, u_c, u_t, u_wo, ilz0, u0,
             BtB, ∇Bt∇B, ∇Btu, ∇Bt∇B_c, ∇Btu_c, ∇Bt∇B_t, ∇Btu_t,
             λ_opt, χ2_opt, λs, χ2s, y,

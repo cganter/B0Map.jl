@@ -1,4 +1,4 @@
-using MAT, CairoMakie, BenchmarkTools, LinearAlgebra
+using MAT, CairoMakie, LinearAlgebra
 import VP4Optim as VP
 import B0Map as BM
 

@@ -1,11 +1,10 @@
-using MAT, CairoMakie, BenchmarkTools, LinearAlgebra
+using MAT, CairoMakie, LinearAlgebra
 import VP4Optim as VP
 import B0Map as BM
 
 include("vp_util.jl")
 
 BLAS.set_num_threads(1)
-
 
 # ISMRM challenge 2012 data sets:
 
