@@ -107,17 +107,27 @@ Actual implementation of PHASER
 """
 function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerOutput) where {T<:AbstractGREMultiEcho}
     # ======================================================================
+    # number of independent real-valued parameters in smooth space
+    # ======================================================================
+
+    freePar = Nfree(bs)
+
+    # ======================================================================
     # Generate subsampling masks
     # ======================================================================
 
     @timeit to "generate subsampling masks" begin
         print("Generate subsampling masks ... ")
 
-        (S, S_c, S_t, Sj_wo, Sj_c_wo, Sj_t_wo) = subsample_mask(fitpar, fitopt, bs)
+        (S, S_c, S_t, Sj, Sj_c, Sj_t) = subsample_mask(fitpar, fitopt, bs)
         szS = size(S)
         ndS = ndims(S)
-        
-        frac_S = sum(S) / sum(fitpar.S)
+        sumS = sum(S)
+        sumS_wo = sumS
+        sumSj = [sum(Sj_) for Sj_ in Sj]
+        sumSj_wo = deepcopy(sumSj)
+        S_wo = deepcopy(S)
+        Sj_wo = deepcopy(Sj)
 
         println("done.")
     end
@@ -147,94 +157,82 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         @. z[S] = @views exp(im * ϕ_ML[S])
 
         # calculate u
-        y = calc_y_(z, Sj_wo)
-        u_wo = [zeros(szS) for _ in 1:length(y)]
-        for (u_, Sj_, y_) in zip(u_wo, Sj_wo, y)
-            @. u_[Sj_] = @views imag(log(y_[Sj_] + 1))
+        y = calc_y_(z, Sj)
+        u = [zeros(szS) for _ in 1:ndS]
+        u_c = [zeros(szS) for _ in 1:ndS]
+        u_t = [zeros(szS) for _ in 1:ndS]
+
+        for j in 1:ndS
+            @. u[j][Sj[j]] = @views angle(y[j][Sj[j]] + 1)
+            u_c[j][Sj_c[j]] .= u[j][Sj_c[j]]
+            u_t[j][Sj_t[j]] .= u[j][Sj_t[j]]
         end
+
+        u_wo = u
+        u_c_wo = u_c
+        u_t_wo = u_t
 
         println("done.")
     end
 
-    # ======================================================================
-    # Remove outliers from Sj
-    # ======================================================================
+    # remove outliers, if desired
+    if fitopt.remove_gradient_outliers
+        # ======================================================================
+        # Remove gradient outliers from Sj
+        # ======================================================================
 
-    @timeit to "remove outliers" begin
-        print("Remove outliers ... ")
+        u_wo = deepcopy(u)
+        u_c_wo = deepcopy(u_c_wo)
+        u_t_wo = deepcopy(u_t_wo)
 
-        # first we determine the maximally allowed u in each direction        
-        au_hist = Histogram[]
-        au_max = Float64[]
+        @timeit to "remove gradient outliers" begin
+            print("Remove gradient outliers ... ")
 
-        for (u_, Sj_) in zip(u_wo, Sj_wo)
-            # setting (2n)^(1/3) ("Rice rule") for the number bins in the histogram was motivated in 
-            # https://doi.org/10.2307/2288074
-            # we take this value (apart from dropping the factor 2 to get an even smoother histogram) 
-            nbins = ceil(Int, (2 * sum(Sj_))^(1 / 3))
-            # store differences
-            au = abs.(u_[Sj_])
-            # boundaries of bin intervals
-            edges = @views range(0.0, max(au...), nbins + 1)
-            # median over Sj
-            med = @views median(au)
-            # the first histogram peak (starting from zero) corresponds to ∇ξ = 0 (see article)
-            # and due to dimensional arguments, the majority u's should be part of it.
-            # the index `iemin` of the median can therefore be used as a starting point
-            iemin = findfirst(e -> e > med, edges)
-            # generate the histogram curve based upon the bins defined above
-            push!(au_hist, fit(Histogram, au, edges))
-            # it is difficult to formulate a general criterion, how to choose a max. allowed
-            # value of `abs(u)`. Assuming that there is a relevant second peak, one can search
-            # for the minimum of the histogram for `u > median(abs(u))`
-            # if there is outlier, this should autmatically include the relevant part of the 
-            # histogram (which a purely local derivative cannot provide with similar stability)
-            fimi = @views findmin(au_hist[end].weights[iemin+1:end])[2]
-            # define cutoff value
-            push!(au_max, edges[fimi+iemin])
-        end
+            # first we determine the maximally allowed u in each direction        
+            au_hist = Histogram[]
+            au_max = Float64[]
 
-        # remove outliers, if desired
-        if fitopt.remove_outliers
-            Sj = BitArray[]
-            Sj_c = [falses(szS) for _ in 1:ndS]
-            Sj_t = [falses(szS) for _ in 1:ndS]
-            u_c = [zeros(szS) for _ in 1:ndS]
-            u_t = [zeros(szS) for _ in 1:ndS]
-            u = [zeros(szS) for _ in 1:ndS]
-
-            for (Sj_c_, Sj_t_, Sj_c_wo_, Sj_t_wo_, u_, uc_, ut_, u_wo_, au_max_) in
-                zip(Sj_c, Sj_t, Sj_c_wo, Sj_t_wo, u, u_c, u_t, u_wo, au_max)
-
-                @. Sj_c_[Sj_c_wo_] = abs(u_wo_[Sj_c_wo_]) < au_max_
-                @. Sj_t_[Sj_t_wo_] = abs(u_wo_[Sj_t_wo_]) < au_max_
-
-                push!(Sj, Sj_c_ .| Sj_t_)
-
-                @. u_[Sj_c_] = u_wo_[Sj_c_]
-                @. uc_[Sj_c_] = u_wo_[Sj_c_]
-                @. u_[Sj_t_] = u_wo_[Sj_t_]
-                @. ut_[Sj_t_] = u_wo_[Sj_t_]
+            for j in 1:ndS
+                # setting (2n)^(1/3) ("Rice rule") for the number bins in the histogram was motivated in 
+                # https://doi.org/10.2307/2288074
+                nbins = ceil(Int, (2sumSj[j])^(1 / 3))
+                # store differences
+                au = abs.(u[j][Sj[j]])
+                # boundaries of bin intervals
+                edges = @views range(0.0, max(au...), nbins + 1)
+                # median over Sj
+                med = @views median(au)
+                # the first histogram peak (starting from zero) corresponds to ∇ξ = 0 (see article)
+                # and due to dimensional arguments, the majority u's should be part of it.
+                # the index `iemin` of the median can therefore be used as a starting point
+                iemin = findfirst(e -> e > med, edges)
+                # generate the histogram curve based upon the bins defined above
+                push!(au_hist, fit(Histogram, au, edges))
+                # it is difficult to formulate a general criterion, how to choose a max. allowed
+                # value of `abs(u)`. Assuming that there is a relevant second peak, one can search
+                # for the minimum of the histogram for `u > median(abs(u))`
+                # if there is outlier, this should autmatically include the relevant part of the 
+                # histogram (which a purely local derivative cannot provide with similar stability)
+                fimi = @views findmin(au_hist[end].weights[iemin+1:end])[2]
+                # define cutoff value
+                push!(au_max, edges[fimi+iemin])
             end
-        else
-            Sj = Sj_wo
-            Sj_c = Sj_c_wo
-            Sj_t = Sj_t_wo
-            u = u_wo
-            u_c = [zeros(szS) for _ in 1:ndS]
-            u_t = [zeros(szS) for _ in 1:ndS]
 
-            for (Sj_c_wo_, Sj_t_wo_, u_, uc_, ut_, u_wo_) in
-                zip(Sj_c_wo, Sj_t_wo, u, u_c, u_t, u_wo)
+            for j in 1:ndS
+                @. Sj[j][Sj[j]] = @views abs(u[j][Sj[j]]) < au_max[j]
+                sumSj[j] = sum(Sj[j])
+                noSj = (!).(Sj[j])
 
-                @. u_[Sj_c_wo_] = u_wo_[Sj_c_wo_]
-                @. uc_[Sj_c_wo_] = u_wo_[Sj_c_wo_]
-                @. u_[Sj_t_wo_] = u_wo_[Sj_t_wo_]
-                @. ut_[Sj_t_wo_] = u_wo_[Sj_t_wo_]
+                Sj_c[j] .&= Sj[j]
+                Sj_t[j] .&= Sj[j]
+
+                u[j][noSj] .= 0.0
+                u_c[j][noSj] .= 0.0
+                u_t[j][noSj] .= 0.0
             end
-        end
 
-        println("done.")
+            println("done.")
+        end
     end
 
     # ======================================================================
@@ -258,7 +256,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             utu_t = sum([sum(abs2.(u_[Sj_])) for (u_, Sj_) in zip(u_t, Sj_t)])
         end
 
-        tikh_grad = calc_μ_tikh(∇Bt∇B_c, ∇Btu_c, utu_c, ∇Bt∇B_t, ∇Btu_t, utu_t, to)
+        tikh_grad = calc_μ_tikh(∇Bt∇B_c, ∇Btu_c, utu_c, ∇Bt∇B_t, ∇Btu_t, utu_t, 0, to)
 
         c = (∇Bt∇B + tikh_grad.μ * I) \ ∇Btu
 
@@ -269,8 +267,6 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         calc_generic_offset!(ϕ0, z, S, fitpar.S)
 
         # remaining deviations
-        # since we now also look at local phase factors as such (instead on their gradients only)
-        # we must be careful not to generate artificial jumps at phase wraps in the scaled map
         z0 = ones(ComplexF64, szS)
         @. z0[S] = @views z[S] * exp(-im * ϕ0[S])
         Δϕ0 = zeros(szS)
@@ -286,37 +282,35 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
     # ======================================================================
 
     if fitopt.balance
-        @timeit to "balance local vs gradient" begin
-            print("Search for best cost function to describe data ... ")
+        @timeit to "balancing, step 1" begin
+            print("Balancing, step 1...")
 
             @timeit to "prep matrices" begin
                 BtB = calc_BtB(bs, S, to)
                 BtB_c = calc_BtB(bs, S_c, to)
                 BtB_t = calc_BtB(bs, S_t, to)
 
-                ilz0 = zeros(szS)
-                ilz0_c = zeros(szS)
-                ilz0_t = zeros(szS)
+                Δϕ0_c = zeros(szS)
+                Δϕ0_t = zeros(szS)
 
-                @. ilz0[S] = @views imag(log(z0[S]))
-                @. ilz0_c[S_c] = @views ilz0[S_c]
-                @. ilz0_t[S_t] = @views ilz0[S_t]
+                @. Δϕ0_c[S_c] = @views Δϕ0[S_c]
+                @. Δϕ0_t[S_t] = @views Δϕ0[S_t]
 
-                z0tz0_c = sum(abs2.(ilz0[S_c]))
-                z0tz0_t = sum(abs2.(ilz0[S_t]))
+                Δϕ0tΔϕ0_c = @views sum(Δϕ0[S_c] .^ 2)
+                Δϕ0tΔϕ0_t = @views sum(Δϕ0[S_t] .^ 2)
 
-                Btz0 = calc_Btx(bs, S, ilz0, to)
-                Btz0_c = calc_Btx(bs, S_c, ilz0_c, to)
-                Btz0_t = calc_Btx(bs, S_t, ilz0_t, to)
+                BtΔϕ0 = calc_Btx(bs, S, Δϕ0, to)
+                BtΔϕ0_c = calc_Btx(bs, S_c, Δϕ0_c, to)
+                BtΔϕ0_t = calc_Btx(bs, S_t, Δϕ0_t, to)
 
                 u0 = [zeros(szS) for _ in 1:ndS]
                 u0_c = [zeros(szS) for _ in 1:ndS]
                 u0_t = [zeros(szS) for _ in 1:ndS]
 
-                for (u_, uc_, ut_, Sj_, Sj_c_, Sj_t_, y_) in zip(u0, u0_c, u0_t, Sj, Sj_c, Sj_t, y0)
-                    @. u_[Sj_] = @views imag(log(y_[Sj_] + 1))
-                    @. uc_[Sj_c_] = @views u_[Sj_c_]
-                    @. ut_[Sj_t_] = @views u_[Sj_t_]
+                for (u_, u_c_, u_t_, Sj_, Sj_c_, Sj_t_, y_) in zip(u0, u0_c, u0_t, Sj, Sj_c, Sj_t, y0)
+                    @. u_[Sj_] = @views angle(y_[Sj_] + 1)
+                    @. u_c_[Sj_c_] = @views u_[Sj_c_]
+                    @. u_t_[Sj_t_] = @views u_[Sj_t_]
                 end
 
                 u0tu0_c = sum([sum(abs2.(u_[Sj_])) for (u_, Sj_) in zip(u0_c, Sj_c)])
@@ -331,42 +325,161 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
                 fitoptλ.optim = fitopt.optim_balance
                 set_num_phase_intervals(fitparλ, fitoptλ, 0)
 
-                tikh_λ = NamedTuple[]
+                tikh_λ_1 = NamedTuple[]
             end
 
             χ2_λ_fun = create_χ2_λ_fun(fitparλ, fitoptλ, bs,
-                BtB, Btz0, ∇Bt∇B, ∇Btu0,
-                BtB_c, Btz0_c, z0tz0_c, ∇Bt∇B_c, ∇Btu0_c, u0tu0_c,
-                BtB_t, Btz0_t, z0tz0_t, ∇Bt∇B_t, ∇Btu0_t, u0tu0_t,
-                ϕ0, tikh_λ, to)
+                BtB, BtΔϕ0, ∇Bt∇B, ∇Btu0,
+                BtB_c, BtΔϕ0_c, Δϕ0tΔϕ0_c, ∇Bt∇B_c, ∇Btu0_c, u0tu0_c,
+                BtB_t, BtΔϕ0_t, Δϕ0tΔϕ0_t, ∇Bt∇B_t, ∇Btu0_t, u0tu0_t,
+                ϕ0, tikh_λ_1, to)
 
             @timeit to "GSS search λ" begin
-                λ_opt, χ2_opt, λs, χ2s = GSS(χ2_λ_fun, (0.0, 1.0), 1e-4; show_all=true)
+                λ_opt_1, χ2_opt_1, λs_1, χ2s_1 = GSS(χ2_λ_fun, (0.0, 1.0), 1e-4; show_all=true)
             end
 
             # take the best match and calculate the solution on fitpar.S
             create_χ2_λ_fun(fitpar, fitoptλ, bs,
-                BtB, Btz0, ∇Bt∇B, ∇Btu0,
-                BtB_c, Btz0_c, z0tz0_c, ∇Bt∇B_c, ∇Btu0_c, u0tu0_c,
-                BtB_t, Btz0_t, z0tz0_t, ∇Bt∇B_t, ∇Btu0_t, u0tu0_t,
-                ϕ0, tikh_λ, to)(λ_opt)
+                BtB, BtΔϕ0, ∇Bt∇B, ∇Btu0,
+                BtB_c, BtΔϕ0_c, Δϕ0tΔϕ0_c, ∇Bt∇B_c, ∇Btu0_c, u0tu0_c,
+                BtB_t, BtΔϕ0_t, Δϕ0tΔϕ0_t, ∇Bt∇B_t, ∇Btu0_t, u0tu0_t,
+                ϕ0, tikh_λ_1, to)(λ_opt_1)
 
             @timeit to "global phase shift" begin
-                # make sure that the phase median over S lies within [-π, π]
+                # make sure that the phase median over S lies within (-π, π]
                 median_shift!(fitpar.ϕ, fitpar.S)
             end
 
+            # store the result in ϕ1
+            ϕ1 = deepcopy(fitpar.ϕ)
+
+            # remaining deviations
+            z1 = ones(ComplexF64, szS)
+            @. z1[S] = @views z[S] * exp(-im * ϕ1[S])
+            Δϕ1 = zeros(szS)
+            @. Δϕ1[S] = @views angle(z1[S])
+
             println("done.")
         end
-    else
-        fitpar.ϕ[:] .= @views ϕ0[:]
 
-        BtB = BtB_c = BtB_t = ilz0 = u0 =
-            λ_opt = χ2_opt = λs = χ2s = tikh_λ = nothing
+        if fitopt.remove_local_outliers
+            # ======================================================================
+            # Remove local outliers from S
+            # ======================================================================
+
+            Δϕ1_wo = deepcopy(Δϕ1)
+
+            @timeit to "remove local outliers" begin
+                print("Remove local outliers ... ")
+
+                # setting (2n)^(1/3) ("Rice rule") for the number bins in the histogram was motivated in 
+                # https://doi.org/10.2307/2288074
+                nbins = ceil(Int, (2sumS)^(1 / 3))
+                # boundaries of bin intervals
+                edges = @views range(min(Δϕ1[S]...), max(Δϕ1[S]...), nbins + 1)
+                # generate the histogram curve based upon the bins defined above
+                Δϕ1_hist = fit(Histogram, Δϕ1[S], edges)
+                # we assume the largest peak to correspond to the correct solution
+                ip = argmax(Δϕ1_hist.weights)
+                # now we go down on both flanks of the peak until the next local minimum is reached
+                ip_min = ip_max = ip
+                ip_max_test = ip_max + 1
+                while ip_max_test <= nbins && Δϕ1_hist.weights[ip_max_test] < Δϕ1_hist.weights[ip_max]
+                    ip_max = ip_max_test
+                    ip_max_test += 1
+                end
+                ip_min_test = ip_min - 1
+                while ip_min_test >= 1 && Δϕ1_hist.weights[ip_min_test] < Δϕ1_hist.weights[ip_min]
+                    ip_min = ip_min_test
+                    ip_min_test -= 1
+                end
+                Δϕ1_min = 0.5(Δϕ1_hist.edges[1][ip_min] + Δϕ1_hist.edges[1][ip_min+1])
+                Δϕ1_max = 0.5(Δϕ1_hist.edges[1][ip_max] + Δϕ1_hist.edges[1][ip_max-1])
+
+                # these local minima then define the locations to keep in S
+                @. S[S] = @views Δϕ1[S] <= Δϕ1_max
+                @. S[S] = @views Δϕ1[S] >= Δϕ1_min
+                sumS = sum(S)
+
+                S_c .&= S
+                S_t .&= S
+
+                Δϕ1[(!).(S)] .= 0.0
+
+                println("done.")
+            end
+
+            @timeit to "balancing, step 2" begin
+                print("Balancing, step 2...")
+
+                @timeit to "prep matrices" begin
+                    BtB = calc_BtB(bs, S, to)
+                    BtB_c = calc_BtB(bs, S_c, to)
+                    BtB_t = calc_BtB(bs, S_t, to)
+
+                    Δϕ0[S_wo.&(!).(S)] .= 0.0
+                    Δϕ0_c .= 0.0
+                    Δϕ0_t .= 0.0
+
+                    @. Δϕ0_c[S_c] = @views Δϕ0[S_c]
+                    @. Δϕ0_t[S_t] = @views Δϕ0[S_t]
+
+                    Δϕ0tΔϕ0_c = @views sum(Δϕ0[S_c] .^ 2)
+                    Δϕ0tΔϕ0_t = @views sum(Δϕ0[S_t] .^ 2)
+
+                    BtΔϕ0 = calc_Btx(bs, S, Δϕ0, to)
+                    BtΔϕ0_c = calc_Btx(bs, S_c, Δϕ0_c, to)
+                    BtΔϕ0_t = calc_Btx(bs, S_t, Δϕ0_t, to)
+
+                    fitparλ = fitPar(fitpar.grePar, fitpar.data, S)
+                    fitoptλ = deepcopy(fitopt)
+                    fitoptλ.optim = fitopt.optim_balance
+                    set_num_phase_intervals(fitparλ, fitoptλ, 0)
+
+                    tikh_λ_2 = NamedTuple[]
+                end
+
+                χ2_λ_fun = create_χ2_λ_fun(fitparλ, fitoptλ, bs,
+                    BtB, BtΔϕ0, ∇Bt∇B, ∇Btu0,
+                    BtB_c, BtΔϕ0_c, Δϕ0tΔϕ0_c, ∇Bt∇B_c, ∇Btu0_c, u0tu0_c,
+                    BtB_t, BtΔϕ0_t, Δϕ0tΔϕ0_t, ∇Bt∇B_t, ∇Btu0_t, u0tu0_t,
+                    ϕ0, tikh_λ_2, to)
+
+                @timeit to "GSS search λ" begin
+                    λ_opt_2, χ2_opt_2, λs_2, χ2s_2 = GSS(χ2_λ_fun, (0.0, 1.0), 1e-4; show_all=true)
+                end
+
+                # take the best match and calculate the solution on fitpar.S
+                create_χ2_λ_fun(fitpar, fitoptλ, bs,
+                    BtB, BtΔϕ0, ∇Bt∇B, ∇Btu0,
+                    BtB_c, BtΔϕ0_c, Δϕ0tΔϕ0_c, ∇Bt∇B_c, ∇Btu0_c, u0tu0_c,
+                    BtB_t, BtΔϕ0_t, Δϕ0tΔϕ0_t, ∇Bt∇B_t, ∇Btu0_t, u0tu0_t,
+                    ϕ0, tikh_λ_2, to)(λ_opt_2)
+
+                @timeit to "global phase shift" begin
+                    # make sure that the phase median over S lies within (-π, π]
+                    median_shift!(fitpar.ϕ, fitpar.S)
+                end
+
+                # store the result in ϕ2
+                ϕ2 = deepcopy(fitpar.ϕ)
+
+                # remaining deviations
+                z2 = ones(ComplexF64, szS)
+                @. z2[S] = @views z[S] * exp(-im * ϕ2[S])
+                Δϕ2 = zeros(szS)
+                @. Δϕ2[S] = @views angle(z2[S])
+
+                println("done.")
+            end
+        else
+            ϕ2, z2, Δϕ2 = ϕ1, z1, Δϕ1
+            Δϕ1_hist = Δϕ1_max = nothing
+            tikh_λ_2 = λ_opt_2 = χ2_opt_2 = λs_2 = χ2s_2 = nothing
+        end
+    else
+        ϕ1, z1, Δϕ1 = ϕ0, z0, Δϕ0
     end
-    
-    # Save the PHASER map
-    ϕ = deepcopy(fitpar.ϕ)
 
     # ======================================================================
     # Final local fit, if desired
@@ -376,9 +489,9 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         @timeit to "final local fit" begin
             fitopt_loc = deepcopy(fitopt)
             set_num_phase_intervals(fitpar, fitopt_loc, 0)
-            
+
             local_fit(fitpar, fitopt_loc)
-            
+
             ϕ_loc = fitpar.ϕ
             R2s_loc = fitpar.R2s
         end
@@ -388,15 +501,24 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
 
     # return diagnostic information, if desired
     if fitopt.diagnostics
-        (; ϕ_ML, R2s_ML, c_ML, χ2_ML, ϕ_loc, R2s_loc,
-            ϕ, ϕ0, Δϕ0, y0, u, u_c, u_t, u_wo, ilz0, u0,
-            BtB, ∇Bt∇B, ∇Btu, ∇Bt∇B_c, ∇Btu_c, ∇Bt∇B_t, ∇Btu_t,
-            λ_opt, χ2_opt, λs, χ2s, y,
+        (;
             S, S_c, S_t,
-            Sj_wo, Sj_c_wo, Sj_t_wo,
             Sj, Sj_c, Sj_t,
-            au_hist, au_max,
-            tikh_grad, tikh_λ, frac_S)
+            S_wo, Sj_wo,
+            sumS, sumS_wo, sumSj, sumSj_wo, freePar,
+            ϕ_ML, R2s_ML, c_ML, χ2_ML,
+            z, y, u, u_c, u_t, u_wo, u_c_wo, u_t_wo,
+            ϕ0, z0, Δϕ0, y0, u0,
+            ϕ1, z1, Δϕ1, Δϕ1_wo,
+            ϕ2, z2, Δϕ2,
+            au_hist, au_max, Δϕ1_hist, Δϕ1_min, Δϕ1_max,
+            BtB, ∇Bt∇B, ∇Btu, ∇Bt∇B_c, ∇Btu_c, ∇Bt∇B_t, ∇Btu_t,
+            tikh_grad, tikh_λ_1, tikh_λ_2,
+            λ_opt_1, χ2_opt_1, λs_1, χ2s_1,
+            λ_opt_2, χ2_opt_2, λs_2, χ2s_2,
+            ϕ_loc, R2s_loc,
+            fitpar,
+        )
     else
         nothing
     end
@@ -423,7 +545,7 @@ function smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; μ
     c_mpi = (BtB + μ_tikh .* I) \ Btϕ
 
     # calculate phase maps for b == 0
-    ϕ[S] = @views phase_map(bs, real(c_mpi[1]), c_mpi[2:end], to)[S]
+    ϕ[S] = @views phase_map(bs, real(c_mpi[1]), c_mpi[2:end])[S]
 end
 
 #= 
@@ -477,9 +599,9 @@ function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N
         Sj_c_[Sj_t_] .= false
     end
 
-    Sj_c = [Sj_c_ for _ in 1:N]
-    Sj_t = [Sj_t_ for _ in 1:N]
-    Sj = [Sj_ for _ in 1:N]
+    Sj_c = [deepcopy(Sj_c_) for _ in 1:N]
+    Sj_t = [deepcopy(Sj_t_) for _ in 1:N]
+    Sj = [deepcopy(Sj_) for _ in 1:N]
 
     S_c = falses(szS)
     S_t = falses(szS)
@@ -810,7 +932,7 @@ function create_χ2_λ_fun(fitparλ, fitopt, bs,
                 xytxy_λ_t = λ * xtx_t + (1 - λ) * yty_t
             end
 
-            push!(tikh_λ, calc_μ_tikh(mat_λ_c, vec_λ_c, xytxy_λ_c, mat_λ_t, vec_λ_t, xytxy_λ_t, to))
+            push!(tikh_λ, calc_μ_tikh(mat_λ_c, vec_λ_c, xytxy_λ_c, mat_λ_t, vec_λ_t, xytxy_λ_t, λ, to))
 
             c = (mat_λ + tikh_λ[end].μ * I) \ vec_λ
             fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end], to)[fitparλ.S] .+ ϕ_0[fitparλ.S]
@@ -821,32 +943,6 @@ function create_χ2_λ_fun(fitparλ, fitopt, bs,
 
             sum(fitparλ.χ2[fitparλ.S])
         end
-    end
-end
-
-"""
-    χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_0, μ_tikh)
-
-TBW
-"""
-function create_χ2_λ_fun_old(fitparλ, fitopt, bs, A, a, B, b, ϕ_0, μ_tikh)
-    λ -> let fitparλ = fitparλ, fitopt = fitopt, bs = bs,
-        A = A, a = a, B = B, b = b,
-        ϕ_0 = ϕ_0, μ_tikh = μ_tikh
-
-        @assert λ ≠ 0
-
-        mat_λ = λ .* A
-        @. mat_λ[2:end, 2:end] += (1 - λ) * B
-        vec_λ = λ .* a
-        @. vec_λ[2:end] += (1 - λ) * b
-
-        #c = (mat_λ + (μ_tikh * max(real.(diag(mat_λ))...)) * I) \ vec_λ
-        c = (mat_λ + μ_tikh * I) \ vec_λ
-        fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end])[fitparλ.S] .+ ϕ_0[fitparλ.S]
-
-        local_fit(fitparλ, fitopt)
-        sum(fitparλ.χ2[fitparλ.S])
     end
 end
 
@@ -875,7 +971,7 @@ end
 
 TBW
 """
-function calc_μ_tikh(AtA_c, Atb_c, btb_c, AtA_t, Atb_t, btb_t, to,
+function calc_μ_tikh(AtA_c, Atb_c, btb_c, AtA_t, Atb_t, btb_t, λ, to,
     μ_log10_rng=(-10, 3), μ_log10_acc=0.01)
 
     @timeit to "calc Tikhonov factor" begin
@@ -896,5 +992,5 @@ function calc_μ_tikh(AtA_c, Atb_c, btb_c, AtA_t, Atb_t, btb_t, to,
     end
 
     (; μ, log10_μ, log10_μ_ct, χ2_opt_ct, log10_μs_ct, χ2s_ct,
-        log10_μ_tc, χ2_opt_tc, log10_μs_tc, χ2s_tc)
+        log10_μ_tc, χ2_opt_tc, log10_μs_tc, χ2s_tc, λ)
 end

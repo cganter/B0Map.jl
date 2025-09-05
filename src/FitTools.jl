@@ -81,7 +81,8 @@ Data structure holding the fit parameters.
 - `os_fac::Vector{Float64}`: oversampling factor
 - `redundancy::Float64`: 
 - `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
-- `remove_outliers::Bool`: Try to eliminate outliers
+- `remove_gradient_outliers::Bool`: Try to eliminate gradient outliers
+- `remove_local_outliers::Bool`: Try to eliminate local outliers
 - `balance::Bool`: Balance local and gradient fit
 - `optim_balance::Bool`: Optimization during balancing of local and gradient fit
 ## General
@@ -108,7 +109,8 @@ mutable struct FitOpt
     os_fac::Vector{Float64}
     redundancy::Float64
     subsampling::Symbol
-    remove_outliers::Bool
+    remove_gradient_outliers::Bool
+    remove_local_outliers::Bool
     test_frac::Float64
     balance::Bool
     optim_balance::Bool
@@ -157,8 +159,9 @@ function fitOpt(ϕ_scale = 1.0)
     os_fac = [2.0]
     redundancy = Inf
     subsampling = :fibonacci
-    remove_outliers = true
-    test_frac = 0.1
+    remove_gradient_outliers = true
+    remove_local_outliers = true
+    test_frac = 0.5
     balance = true
     optim_balance = false
     n_chunks = 8Threads.nthreads()
@@ -167,7 +170,8 @@ function fitOpt(ϕ_scale = 1.0)
     diagnostics = false
     accel = :mt
     FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, locfit, optim, optim_phaser, autodiff, μ_tikh, K, 
-            os_fac, redundancy, subsampling, remove_outliers, test_frac, balance, optim_balance,
+            os_fac, redundancy, subsampling, remove_gradient_outliers, remove_local_outliers,
+            test_frac, balance, optim_balance,
             n_chunks, rng, verbose, diagnostics, accel)
 end
 

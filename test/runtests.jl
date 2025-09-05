@@ -4,7 +4,6 @@ using Test
     include("test_BFourierLin.jl")
 end;
 
-#=
 @testset "GREMultiEchoWFFW.jl" begin
     include("test_GREMultiEchoWFFW.jl")
 end;
@@ -16,4 +15,3 @@ end;
 @testset "GREMultiEchoWF.jl" begin
     include("test_GREMultiEchoWF.jl")
 end;
-=#

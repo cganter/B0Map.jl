@@ -18,7 +18,7 @@ end
 # the supplied mask is too inclusive
 # the following choice is better but far from perfect..
 # the choice is insofar important as 
-S = abs.(data[:, :, :, 2]) .> 0.5;
+S = abs.(data[:, :, :, 2]) .> 0.25; # 0.5
 
 # echo times
 TEs = 1000obj_data["TE_s"];  # the expected unit is [ms]
@@ -49,14 +49,13 @@ fitpar = BM.fitPar(grePar, deepcopy(data), deepcopy(S))
 
 # ... and of FitOpt
 fitopt = BM.fitOpt()
-fitopt.K = [4, 4, 4]
+fitopt.K = [3, 3, 3]
 fitopt.R2s_rng = [0.0, 0.0]
-fitopt.redundancy = 80
-#fitopt.subsampling = :random
-fitopt.remove_outliers = true
+fitopt.redundancy = 100
+fitopt.subsampling = :fibonacci
+fitopt.remove_gradient_outliers = true
+fitopt.remove_local_outliers = true
 fitopt.locfit = false # we only want to reconstruct a single slice
-fitopt.μ_tikh = 0.012 # 280.3 #3.887 #10^(-3.2)
-fitopt.test_frac = 0.5
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
 fitopt.diagnostics = true;
@@ -67,36 +66,6 @@ bs = BM.fourier_lin(Nρ[1:length(fitopt.K)], fitopt.K; os_fac=fitopt.os_fac)
 
 # apply PHASER
 res = BM.phaser!(fitpar, fitopt, bs)
-
-#=
-
-fig = Figure()
-ax = Axis(fig[1,1])
-n = ceil(Int, sum(res.PH.Sj[1])^(1/3))
-aily = abs.(imag.(res.PH.ly[1][res.PH.Sj[1]]))
-aily_0 = abs.(imag.(res.PH.ly_0[1][res.PH.Sj[1]]))
-stephist!(ax, aily, bins=n, color=:red)
-stephist!(ax, aily_0, bins=n, color=:blue)
-
-med = median(aily)
-med_0 = median(aily_0)
-edges = range(0.0, max(aily...), n+1)
-edges_0 = range(0.0, max(aily_0...), n+1)
-iemin = findfirst(e -> e > med, edges)
-iemin_0 = findfirst(e -> e > med_0, edges_0)
-h = @views fit(Histogram, aily, edges)
-h_0 = @views fit(Histogram, aily_0, edges_0)
-fifi = @views findfirst(x -> x > 0, h.weights[iemin+1:end] - h.weights[iemin:end-1])
-fifi_0 = @views findfirst(x -> x > 0, h_0.weights[iemin_0+1:end] - h_0.weights[iemin_0:end-1])
-aily_max = edges[fifi+iemin-1]
-aily_max_0 = edges[fifi_0+iemin_0-1]
-println("n = ", n)
-println("med = ", med)
-println("med_0 = ", med_0)
-
-display(fig)
-=#
-
 
 # we select a slice to show
 cor_sl = 64
@@ -125,7 +94,7 @@ inch = 96
 pt = 4 / 3
 
 #width, height = 6.9inch, 4.6inch
-width, height = 6.9inch, 6.6inch
+width, height = 6.9inch, 4.6inch #6.6inch
 colmapO = :romaO
 colmap = :roma
 colmap_f = :imola
@@ -137,6 +106,8 @@ noS_phs_sl = (!).(S_phs_sl)
 c_loc_phs = zeros(ComplexF64, size(S_sl))
 BM.calc_par(fitpar_loc_phs, fitopt, x -> BM.coil_sensitivities(x)[1], c_loc_phs)
 
+#
+
 ϕ_ML_sl = @views res.PH.ϕ_ML[:,:,cor_sl]
 ϕ_ML_sl[noS_phs_sl] .= NaN
 ϕ_loc[noS_sl] .= NaN
@@ -144,11 +115,13 @@ BM.calc_par(fitpar_loc_phs, fitopt, x -> BM.coil_sensitivities(x)[1], c_loc_phs)
 ϕ_phs_sl[noS_sl] .= NaN
 ϕ0_phs_sl = @views res.PH.ϕ0[:,:,cor_sl]
 ϕ0_phs_sl[noS_sl] .= NaN
+ϕ1_phs_sl = @views res.PH.ϕ1[:,:,cor_sl]
+ϕ1_phs_sl[noS_sl] .= NaN
+ϕ2_phs_sl = @views res.PH.ϕ2[:,:,cor_sl]
+ϕ2_phs_sl[noS_sl] .= NaN
 ϕ_phs_loc_sl = fitpar_loc_phs.ϕ
 ϕ_phs_loc_sl[noS_sl] .= NaN
 c_loc_phs[noS_sl] .= NaN
-#lim_ϕ = (min(ϕ_phs_sl[S_sl]...,ϕ_phs_loc_sl[S_sl]...), max(ϕ_phs_sl[S_sl]...,ϕ_phs_loc_sl[S_sl]...))
-#lim_ϕ = (min(ϕ_phs_loc_sl[S_sl]...), max(ϕ_phs_loc_sl[S_sl]...))
 lim_ϕ = (-π, π)
 f_loc[noS_sl] .= NaN
 f_loc_phs[noS_sl] .= NaN
@@ -161,7 +134,7 @@ fig = Figure(size = (width, height))
 # -------------------------------------------------
 
 ax = Axis(fig[1, 1],
-    title=L"$f$ (local)",
+    title=L"$$PDFF (ML)",
 )
 
 heatmap!(ax,
@@ -180,7 +153,7 @@ Label(fig[1, 1, TopLeft()], "A",
 # -------------------------------------------------
 
 ax = Axis(fig[1, 2],
-    title=L"$\varphi$ (local)",
+    title=L"$\varphi$ (ML)",
 )
 
 heatmap!(ax,
@@ -198,7 +171,7 @@ Label(fig[1, 2, TopLeft()], "B",
 # -------------------------------------------------
 
 ax = Axis(fig[1, 3],
-    title=L"$\varphi$ (local sample)",
+    title=L"$\varphi \in S$ (ML)",
 )
 
 heatmap!(ax,
@@ -225,7 +198,7 @@ Colorbar(fig[1, 4],
 # -------------------------------------------------
 
 ax = Axis(fig[2, 1],
-    title=L"$f$ (PHASER + local)",
+    title=L"PDFF ($\varphi^{(2)}$ + ML)",
 )
 
 heatmap!(ax,
@@ -244,7 +217,7 @@ Label(fig[2, 1, TopLeft()], "D",
 # -------------------------------------------------
 
 ax = Axis(fig[2, 3],
-    title=L"$\varphi$ (PHASER)",
+    title=L"$\varphi^{(2)}$",
 )
 
 heatmap!(ax,
@@ -263,7 +236,7 @@ Label(fig[2, 3, TopLeft()], "F",
 # -------------------------------------------------
 
 ax = Axis(fig[2, 2],
-    title=L"$\varphi$ (PHASER + local)",
+    title=L"$\varphi^{(2)}$ + ML",
 )
 
 heatmap!(ax,
@@ -288,6 +261,7 @@ Colorbar(fig[2, 4],
     ticklabelsize=8pt,
 )
 
+#=
 # -------------------------------------------------
 
 ax = Axis(fig[3, 1],
@@ -353,6 +327,7 @@ Colorbar(fig[3, 4],
 )
 
 # -------------------------------------------------
+=#
 
 display(fig)
 

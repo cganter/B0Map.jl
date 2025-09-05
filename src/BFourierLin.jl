@@ -36,7 +36,7 @@ struct BFourierLin{N} <: BSmooth{N}
     ws_ρ::Array{Float64,N}
     ws_κ::Array{ComplexF64,N}
     ρνs::Vector{Array{Float64,N}}
-    Δρ::Vector{Float64}
+    Δr::Vector{Float64}
 end
 
 """
@@ -130,11 +130,11 @@ function fourier_lin(Nρ_orig, K; os_fac=[1.0])
         Nρ_orig[1:j-1]..., 1, Nρ_orig[j+1:end]...) for
            (j, N) in enumerate(Nρ_orig)]
 
-    Δρ = [2ρ_max ./ (N - 1.0) for N in Nρ_orig]
+    Δr = [2ρ_max ./ (N - 1.0) for N in Nρ_orig]
 
     BFourierLin(Nρ, Nκ, Nν, K, Nρ_orig,
         κ, aκ, ciκ, ciκ_po, ciκ_ne, idx_po, idx_ne, ciκmκ0, ciκmκ, ciκpκ,
-        ws_ρ, ws_κ, ρνs, Δρ)
+        ws_ρ, ws_κ, ρνs, Δr)
 end
 
 """
@@ -302,7 +302,7 @@ function calc_∇Bc(bf::BFourierLin, c::AbstractVector, to::TimerOutput=TimerOut
         for (ν, aκ_) in zip(1:Nν(bf), bf.aκ)
             bf.ws_κ[bf.ciκ[2:end]] = @views conj.(aκ_[2:end]) .* c[1:nκ1]
             ∇Bc[ν] += @views real.(bfft(bf.ws_κ)[(1:n for n in bf.Nρ_orig)...])
-            ∇Bc[ν] .+= real(bf.Δρ[ν] * c[nκ1+ν])
+            ∇Bc[ν] .+= real(bf.Δr[ν] * c[nκ1+ν])
         end
     end
 
@@ -337,9 +337,9 @@ function calc_∇Bt∇B(bf::BFourierLin, Sj::AbstractVector, to::TimerOutput=Tim
             FT_Sj = fft(bf.ws_ρ)
 
             ∇Bt∇B[1:nκ1, 1:nκ1] += @views aκ_[2:end] .* FT_Sj[bf.ciκmκ] .* aκ_[2:end]'
-            ∇Bt∇B[1:nκ1, nκ1+ν] = @views bf.Δρ[ν] .* aκ_[2:end] .* FT_Sj[bf.ciκ[2:end]]
+            ∇Bt∇B[1:nκ1, nκ1+ν] = @views bf.Δr[ν] .* aκ_[2:end] .* FT_Sj[bf.ciκ[2:end]]
             ∇Bt∇B[nκ1+ν, 1:nκ1] = @views conj.(∇Bt∇B[1:nκ1, nκ1+ν])
-            ∇Bt∇B[nκ1+ν, nκ1+ν] = bf.Δρ[ν]^2 * sum(Sj_)
+            ∇Bt∇B[nκ1+ν, nκ1+ν] = bf.Δr[ν]^2 * sum(Sj_)
         end
     end
 
@@ -376,7 +376,7 @@ function calc_∇Btx(bf::BFourierLin, Sj::AbstractVector, x::AbstractVector, to:
             #copyto!(bf.ws_ρ, CartesianIndices(x_), x_, CartesianIndices(x_))
 
             ∇Btx[1:nκ1] += @views (aκ_.*fft(bf.ws_ρ)[bf.ciκ])[2:end]
-            ∇Btx[nκ1+ν] = @views bf.Δρ[ν] * sum(x_[Sj_])
+            ∇Btx[nκ1+ν] = @views bf.Δr[ν] * sum(x_[Sj_])
         end
     end
 

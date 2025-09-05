@@ -9,6 +9,7 @@ BLAS.set_num_threads(1)
 # ISMRM challenge 2012 data sets:
 
 data_set = 5
+slice = 3
 
 # 1: tibia, tra
 # 2: upper body, cor
@@ -33,27 +34,25 @@ fitopt.K = [4, 4]
 fitopt.redundancy = Inf
 fitopt.diagnostics = true
 fitopt.balance = true
+fitopt.remove_local_outliers = true
 fitopt.os_fac = [1.3]
 
-cal = ismrm_challenge(fitopt; data_set=data_set);
-
-##
+cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
 
 (fig, dax) = gen_fig_ISMRM(cal;
-    slice = 3,
     width = 800,
     height = 800,
-    cm_phase_2π = :romaO,
     cm_phase = :roma,
     cm_fat = :imola,
 )
 
 display(fig)
 
+PH = cal.PH.PH;
+
 ##
 
-fig_name = "ismrm_ds_5_sl_3"
-#fig_name = "ismrm_ds_12_sl_2"
+fig_name = "ismrm_ds_" * string(data_set) * "_sl_" * string(slice)
 save(fig_name * ".svg", fig)
 run(`/home/cganter/bin/svg2eps $fig_name`)
 run(`epspdf $fig_name".eps"`)

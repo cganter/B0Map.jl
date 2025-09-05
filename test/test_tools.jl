@@ -56,7 +56,9 @@ mutable struct SimPhaPar
     # PHASER settings
     redundancy::Float64
     subsampling::Symbol
-    remove_outliers::Bool
+    balance::Bool
+    remove_gradient_outliers::Bool
+    remove_local_outliers::Bool
     locfit::Bool
     optim::Bool
     optim_phaser::Bool
@@ -92,7 +94,7 @@ function SimPhaPar()
     S_rng = [-1.0, 1.0]
     freq_rng = Float64[] # frequency limits [kHz]
     ϕ_rng = Float64[]
-    R2s_rng = [0.0, 1.0] # PHASER
+    R2s_rng = [0.0, 0.2] # PHASER
     R2s_rng_pha = Float64[] # phantom
     f_rng = [0.0, 1.0] # PHASER
     f_rng_pha = Float64[] # phantom
@@ -120,10 +122,12 @@ function SimPhaPar()
     # PHASER settings
     redundancy = Inf
     subsampling = :fibonacci
-    remove_outliers = true
+    balance = true
+    remove_gradient_outliers = true
+    remove_local_outliers = true
     locfit = true
     optim = true
-    optim_phaser = false
+    optim_phaser = true
     μ_tikh = 100eps()
     # miscellaneous settings
     n_chunks = 8Threads.nthreads()
@@ -138,7 +142,8 @@ function SimPhaPar()
         S_zc, ϕ_zc, R2s_zc, f_zc, coils_zc,
         S_holes, S_io,
         ϕ_proj, ϕ_med,
-        redundancy, subsampling, remove_outliers, locfit, optim, optim_phaser, μ_tikh, n_chunks, rng
+        redundancy, subsampling, balance, remove_gradient_outliers, remove_local_outliers, 
+        locfit, optim, optim_phaser, μ_tikh, n_chunks, rng
     )
 end
 
@@ -373,7 +378,9 @@ function simulate_phantom(spp::SimPhaPar)
     fitopt.R2s_rng = spp.R2s_rng
     fitopt.redundancy = spp.redundancy
     fitopt.subsampling = spp.subsampling
-    fitopt.remove_outliers = spp.remove_outliers
+    fitopt.balance = spp.balance
+    fitopt.remove_gradient_outliers = spp.remove_gradient_outliers
+    fitopt.remove_local_outliers = spp.remove_local_outliers
     fitopt.locfit = spp.locfit
     fitopt.optim = spp.optim
     fitopt.optim_phaser = spp.optim_phaser
@@ -398,16 +405,19 @@ function simulate_phantom(spp::SimPhaPar)
 
     PH.ϕ_ML[noS_ML] .= NaN
 
-    PH.ϕ[noS] .= NaN
-    PH.ϕ_0[noS] .= NaN
-    PH.Δϕ_0[noS] .= NaN
-    PH.ilz_0[noS] .= NaN
+    PH.ϕ0[noS] .= NaN
+    PH.ϕ1[noS] .= NaN
+    PH.ϕ2[noS] .= NaN
+    PH.Δϕ0[noS] .= NaN
+    PH.Δϕ1[noS] .= NaN
+    PH.Δϕ2[noS] .= NaN
 
     noSj = [(!).(PH.Sj[j]) for j in 1:2]
     for j in 1:2
         PH.y[j][noSj[j]] .= NaN
         PH.u[j][noSj[j]] .= NaN
-        PH.u_0[j][noSj[j]] .= NaN
+        PH.u0[j][noSj[j]] .= NaN
+        PH.u1[j][noSj[j]] .= NaN
     end
 
     fitpar.ϕ[noS] .= NaN
