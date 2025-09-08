@@ -351,13 +351,13 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             end
 
             # store the result in ϕ1
-            ϕ1 = deepcopy(fitpar.ϕ)
+            ϕ1_wo = deepcopy(fitpar.ϕ)
 
             # remaining deviations
-            z1 = ones(ComplexF64, szS)
-            @. z1[S] = @views z[S] * exp(-im * ϕ1[S])
-            Δϕ1 = zeros(szS)
-            @. Δϕ1[S] = @views angle(z1[S])
+            z1_wo = ones(ComplexF64, szS)
+            @. z1_wo[S] = @views z[S] * exp(-im * ϕ1_wo[S])
+            Δϕ1_wo = zeros(szS)
+            @. Δϕ1_wo[S] = @views angle(z1_wo[S])
 
             println("done.")
         end
@@ -367,8 +367,6 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             # Remove local outliers from S
             # ======================================================================
 
-            Δϕ1_wo = deepcopy(Δϕ1)
-
             @timeit to "remove local outliers" begin
                 print("Remove local outliers ... ")
 
@@ -376,9 +374,9 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
                 # https://doi.org/10.2307/2288074
                 nbins = ceil(Int, (2sumS)^(1 / 3))
                 # boundaries of bin intervals
-                edges = @views range(min(Δϕ1[S]...), max(Δϕ1[S]...), nbins + 1)
+                edges = @views range(min(Δϕ1_wo[S]...), max(Δϕ1_wo[S]...), nbins + 1)
                 # generate the histogram curve based upon the bins defined above
-                Δϕ1_hist = fit(Histogram, Δϕ1[S], edges)
+                Δϕ1_hist = fit(Histogram, Δϕ1_wo[S], edges)
                 # we assume the largest peak to correspond to the correct solution
                 ip = argmax(Δϕ1_hist.weights)
                 # now we go down on both flanks of the peak until the next local minimum is reached
@@ -397,13 +395,13 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
                 Δϕ1_max = 0.5(Δϕ1_hist.edges[1][ip_max] + Δϕ1_hist.edges[1][ip_max-1])
 
                 # these local minima then define the locations to keep in S
-                @. S[S] = @views Δϕ1[S] <= Δϕ1_max
-                @. S[S] = @views Δϕ1[S] >= Δϕ1_min
+                @. S[S] = @views Δϕ1_min <= Δϕ1_wo[S] <= Δϕ1_max
                 sumS = sum(S)
 
                 S_c .&= S
                 S_t .&= S
 
+                Δϕ1 = deepcopy(Δϕ1_wo)
                 Δϕ1[(!).(S)] .= 0.0
 
                 println("done.")
@@ -462,18 +460,18 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
                 end
 
                 # store the result in ϕ2
-                ϕ2 = deepcopy(fitpar.ϕ)
+                ϕ1 = deepcopy(fitpar.ϕ)
 
                 # remaining deviations
-                z2 = ones(ComplexF64, szS)
-                @. z2[S] = @views z[S] * exp(-im * ϕ2[S])
-                Δϕ2 = zeros(szS)
-                @. Δϕ2[S] = @views angle(z2[S])
+                z1 = ones(ComplexF64, szS)
+                @. z1[S] = @views z[S] * exp(-im * ϕ1[S])
+                Δϕ1 = zeros(szS)
+                @. Δϕ1[S] = @views angle(z1[S])
 
                 println("done.")
             end
         else
-            ϕ2, z2, Δϕ2 = ϕ1, z1, Δϕ1
+            ϕ1, z1, Δϕ1 = ϕ1_wo, z1_wo, Δϕ1_wo
             Δϕ1_hist = Δϕ1_max = nothing
             tikh_λ_2 = λ_opt_2 = χ2_opt_2 = λs_2 = χ2s_2 = nothing
         end
@@ -509,8 +507,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             ϕ_ML, R2s_ML, c_ML, χ2_ML,
             z, y, u, u_c, u_t, u_wo, u_c_wo, u_t_wo,
             ϕ0, z0, Δϕ0, y0, u0,
-            ϕ1, z1, Δϕ1, Δϕ1_wo,
-            ϕ2, z2, Δϕ2,
+            ϕ1, z1, Δϕ1, ϕ1_wo, z1_wo, Δϕ1_wo,
             au_hist, au_max, Δϕ1_hist, Δϕ1_min, Δϕ1_max,
             BtB, ∇Bt∇B, ∇Btu, ∇Bt∇B_c, ∇Btu_c, ∇Bt∇B_t, ∇Btu_t,
             tikh_grad, tikh_λ_1, tikh_λ_2,

@@ -9,7 +9,7 @@ BLAS.set_num_threads(1)
 # ISMRM challenge 2012 data sets:
 
 data_set = 5
-slice = 3
+slice = 5
 
 # 1: tibia, tra
 # 2: upper body, cor
@@ -30,7 +30,7 @@ slice = 3
 # 17: shoulder, cor
 
 fitopt = BM.fitOpt()
-fitopt.K = [4, 4]
+fitopt.K = [5, 5]
 fitopt.redundancy = Inf
 fitopt.diagnostics = true
 fitopt.balance = true

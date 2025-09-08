@@ -108,16 +108,13 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     ϕ1_PH = cal.PH.PH.ϕ1
     ϕ1_PH[noS] .= NaN
 
-    ϕ_PH = cal.PH.PH.ϕ2
-    ϕ_PH[noS] .= NaN
-
-    bal_rng = (min(ϕ_PH[S]..., -π), max(ϕ_PH[S]..., π))
+    bal_rng = (min(ϕ1_PH[S]..., -π), max(ϕ1_PH[S]..., π))
 
     ϕ0_PH_loc = cal.locfit_0.ϕ
     ϕ0_PH_loc[noS] .= NaN
 
-    ϕ_PH_loc = cal.fitpar.ϕ
-    ϕ_PH_loc[noS] .= NaN
+    ϕ1_PH_loc = cal.fitpar.ϕ
+    ϕ1_PH_loc[noS] .= NaN
 
     pdff_ML = cal.pdff_ML
     pdff_0 = cal.pdff_0
@@ -137,7 +134,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:ϕ_ML] = Axis(fig[1, 1],
-        title=L"$\varphi$ (local fit)",
+        title=L"$\varphi$ (ML)",
     )
 
     heatmap!(dax[:ϕ_ML],
@@ -155,7 +152,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:ϕ0] = Axis(fig[1, 2],
-        title=L"$\varphi_0$",
+        title=L"$\varphi^{(0)}$",
     )
 
     heatmap!(dax[:ϕ0],
@@ -172,12 +169,12 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
 
     # -------------------------------------------------
 
-    dax[:ϕ] = Axis(fig[1, 3],
-        title=L"$\varphi$",
+    dax[:ϕ1] = Axis(fig[1, 3],
+        title=L"$\varphi^{(1)}$",
     )
 
-    heatmap!(dax[:ϕ],
-        oi(ϕ_PH),
+    heatmap!(dax[:ϕ1],
+        oi(ϕ1_PH),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -197,8 +194,8 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
         yticklabelsize=8pt,
     )
 
-    lines!(dax[:λ_opt], λs_2, χ2s_2, color=:red)
-    scatter!(dax[:λ_opt], λs_2, χ2s_2, color=:blue)
+    lines!(dax[:λ_opt], λs_2, χ2s_2 ./ χ2s_2[1], color=:red)
+    scatter!(dax[:λ_opt], λs_2, χ2s_2 ./ χ2s_2[1], color=:blue)
 
     Label(fig[2, 1, TopLeft()], "D",
         font=:bold,
@@ -208,7 +205,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:ϕ0_loc] = Axis(fig[2, 2],
-        title=L"$\varphi_0$ + local fit",
+        title=L"$\varphi^{(0)}$ + ML",
     )
 
     heatmap!(dax[:ϕ0_loc],
@@ -225,12 +222,12 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
 
     # -------------------------------------------------
 
-    dax[:ϕ_loc] = Axis(fig[2, 3],
-        title=L"$\varphi$ + local fit",
+    dax[:ϕ1_loc] = Axis(fig[2, 3],
+        title=L"$\varphi^{(1)}$ + ML",
     )
 
-    heatmap!(dax[:ϕ_loc],
-        oi(ϕ_PH_loc),
+    heatmap!(dax[:ϕ1_loc],
+        oi(ϕ1_PH_loc),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -244,7 +241,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff_ML] = Axis(fig[3, 1],
-        title=L"$$PDFF (local fit)",
+        title=L"$$PDFF (ML)",
     )
 
     heatmap!(dax[:pdff_ML],
@@ -262,7 +259,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff_0] = Axis(fig[3, 2],
-        title=L"$$PDFF ($φ_0$ + local fit)",
+        title=L"$$PDFF ($φ^{(0)}$ + ML)",
     )
 
     heatmap!(dax[:pdff_0],
@@ -280,7 +277,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff] = Axis(fig[3, 3],
-        title=L"$$PDFF ($φ$ + local fit)",
+        title=L"$$PDFF ($φ^{(1)}$ + ML)",
     )
 
     heatmap!(dax[:pdff],
@@ -313,7 +310,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
         ticklabelsize=8pt,
     )
 
-    for a in (:ϕ_ML, :ϕ0, :ϕ, :ϕ0_loc, :ϕ_loc, :pdff_ML, :pdff_0, :pdff)
+    for a in (:ϕ_ML, :ϕ0, :ϕ1, :ϕ0_loc, :ϕ1_loc, :pdff_ML, :pdff_0, :pdff)
         hidedecorations!(dax[a])
     end
 

@@ -117,8 +117,6 @@ BM.calc_par(fitpar_loc_phs, fitopt, x -> BM.coil_sensitivities(x)[1], c_loc_phs)
 ϕ0_phs_sl[noS_sl] .= NaN
 ϕ1_phs_sl = @views res.PH.ϕ1[:,:,cor_sl]
 ϕ1_phs_sl[noS_sl] .= NaN
-ϕ2_phs_sl = @views res.PH.ϕ2[:,:,cor_sl]
-ϕ2_phs_sl[noS_sl] .= NaN
 ϕ_phs_loc_sl = fitpar_loc_phs.ϕ
 ϕ_phs_loc_sl[noS_sl] .= NaN
 c_loc_phs[noS_sl] .= NaN
@@ -198,7 +196,7 @@ Colorbar(fig[1, 4],
 # -------------------------------------------------
 
 ax = Axis(fig[2, 1],
-    title=L"PDFF ($\varphi^{(2)}$ + ML)",
+    title=L"PDFF ($\varphi^{(1)}$ + ML)",
 )
 
 heatmap!(ax,
@@ -217,7 +215,7 @@ Label(fig[2, 1, TopLeft()], "D",
 # -------------------------------------------------
 
 ax = Axis(fig[2, 3],
-    title=L"$\varphi^{(2)}$",
+    title=L"$\varphi^{(1)}$",
 )
 
 heatmap!(ax,
@@ -236,7 +234,7 @@ Label(fig[2, 3, TopLeft()], "F",
 # -------------------------------------------------
 
 ax = Axis(fig[2, 2],
-    title=L"$\varphi^{(2)}$ + ML",
+    title=L"$\varphi^{(1)}$ + ML",
 )
 
 heatmap!(ax,
