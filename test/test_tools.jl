@@ -401,23 +401,21 @@ function simulate_phantom(spp::SimPhaPar)
     to = rp.to
 
     noS = phantom.noS
-    noS_ML = (!).(PH.S)
+    noS_ML = (!).(PH.S_wo)
 
     PH.ϕ_ML[noS_ML] .= NaN
 
     PH.ϕ0[noS] .= NaN
     PH.ϕ1[noS] .= NaN
-    PH.ϕ2[noS] .= NaN
+    PH.ϕ1_wo[noS] .= NaN
     PH.Δϕ0[noS] .= NaN
     PH.Δϕ1[noS] .= NaN
-    PH.Δϕ2[noS] .= NaN
 
     noSj = [(!).(PH.Sj[j]) for j in 1:2]
     for j in 1:2
         PH.y[j][noSj[j]] .= NaN
         PH.u[j][noSj[j]] .= NaN
         PH.u0[j][noSj[j]] .= NaN
-        PH.u1[j][noSj[j]] .= NaN
     end
 
     fitpar.ϕ[noS] .= NaN

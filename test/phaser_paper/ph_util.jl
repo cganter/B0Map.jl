@@ -134,7 +134,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:ϕ_ML] = Axis(fig[1, 1],
-        title=L"$\varphi$ (ML)",
+        title=L"$\Phi$",
     )
 
     heatmap!(dax[:ϕ_ML],
@@ -205,7 +205,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:ϕ0_loc] = Axis(fig[2, 2],
-        title=L"$\varphi^{(0)}$ + ML",
+        title=L"$\Phi\left(\varphi^{(0)}\right)$",
     )
 
     heatmap!(dax[:ϕ0_loc],
@@ -223,7 +223,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:ϕ1_loc] = Axis(fig[2, 3],
-        title=L"$\varphi^{(1)}$ + ML",
+        title=L"$\Phi\left(\varphi^{(1)}\right)$",
     )
 
     heatmap!(dax[:ϕ1_loc],
@@ -241,7 +241,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff_ML] = Axis(fig[3, 1],
-        title=L"$$PDFF (ML)",
+        title=L"PDFF: $\Phi$",
     )
 
     heatmap!(dax[:pdff_ML],
@@ -259,7 +259,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff_0] = Axis(fig[3, 2],
-        title=L"$$PDFF ($φ^{(0)}$ + ML)",
+        title=L"PDFF: $\Phi\left(φ^{(0)}\right)$",
     )
 
     heatmap!(dax[:pdff_0],
@@ -277,7 +277,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff] = Axis(fig[3, 3],
-        title=L"$$PDFF ($φ^{(1)}$ + ML)",
+        title=L"PDFF: $\Phi\left(φ^{(1)}\right)$",
     )
 
     heatmap!(dax[:pdff],
@@ -323,8 +323,6 @@ end
 Rotate data set properly.
 """
 function orient_ISMRM(data_set::Int)
-    @assert data_set ∈ 1:17
-
     if data_set ∈ (1:12..., 14:15,)
         x -> rotr90(x)
     elseif data_set ∈ (13, 17,)
@@ -361,7 +359,7 @@ function show_phase_maps(PH; slice=1, width=800, height=800, cm=:roma, cm_2π=:r
     show_map!(axs[1, 1], PH.ϕ_ML, L"$\varphi_{ML}$", PH.S; cm=:romaO, cr=(-π, π), slice=slice)
     show_map!(axs[1, 2], PH.ϕ0, L"$\varphi_0$", cm=:romaO, PH.fitpar.S; cr=(-π, π), slice=slice)
     show_map!(axs[2, 2], PH.Δϕ0, L"$\Delta\varphi_0$", PH.fitpar.S; cm=:romaO, cr=(-π, π), slice=slice)
-    show_map!(axs[2, 1], PH.ϕ, L"$\varphi$", PH.fitpar.S; cm=:romaO, cr=(-π, π), slice=slice)
+    show_map!(axs[2, 1], PH.ϕ1, L"$\varphi$", PH.fitpar.S; cm=:romaO, cr=(-π, π), slice=slice)
 
     display(fig)
 end
@@ -441,7 +439,7 @@ function show_tikh_balance!(ax, PH, is)
     end
 end
 
-function show_map!(ax, map_in, name, S; slice=1, cm, cr)
+function show_map!(ax, map_in, name, S; slice=1, cm, cr=Makie.automatic)
     map_sl = @views map_in[:, :, slice]
     nanS = @views (!).(S[:, :, slice])
     map_sl[nanS] .= NaN
@@ -454,4 +452,115 @@ function show_map!(ax, map_in, name, S; slice=1, cm, cr)
         colorrange=cr,
         nan_color=:black,
     )
+end
+
+function show_hist_phase_grad!(ax, PH, name; j=1, nbins=100, col_in=:blue, col_out=:red, alpha_out=0.3)
+    ax.title = name
+    hideydecorations!(ax)
+
+    bins = range(0, π, nbins + 1)
+    clrs = [mean((lb, rb)) < PH.au_max[j] ? col_in : (col_out, alpha_out) for (lb, rb) in zip(bins[1:end-1], bins[2:end])]
+
+    hist!(ax, abs.(PH.u_wo[j][PH.Sj_wo[j]]), bins=bins, color=clrs)
+end
+
+function show_hist_Δϕ1!(ax, PH, name; nbins=100, col_in=:blue, col_out=:red, alpha_out=0.3)
+    ax.title = name
+    hideydecorations!(ax)
+
+    bins = range(-π, π, nbins + 1)
+    clrs = [PH.Δϕ1_min <= mean((lb, rb)) <= PH.Δϕ1_max ? col_in : (col_out, alpha_out) for (lb, rb) in zip(bins[1:end-1], bins[2:end])]
+
+    hist!(ax, PH.Δϕ1_wo[PH.S_wo], bins=bins, color=clrs)
+end
+
+function phaser_workflow!(PH;
+    width=800,
+    height=500,
+    nbins=100,
+    j=1,
+    col_in=:blue, col_out=:red, alpha_out=0.3,
+    cm=:roma,
+    font_pt=12,
+    slice=1,
+    oi = x -> x,
+)
+    pt = 4 / 3
+    fig = Figure(size=(width, height), fontsize=font_pt * pt)
+
+    # map every phase into interval [-π, π)
+    f_2π = ϕ -> mod.(ϕ .+ π, 2π) .- π
+
+    # several shorthands
+    S = @views PH.S[:,:,slice]
+    S_wo = @views PH.S_wo[:,:,slice]
+    Sj_wo = @views PH.Sj_wo[j][:,:,slice]
+
+    ϕ_ML = @views PH.ϕ_ML[:,:,slice]
+    ϕ0 = @views PH.ϕ0[:,:,slice]
+    ϕ1 = @views PH.ϕ1[:,:,slice]
+    ϕ1_wo = @views PH.ϕ1_wo[:,:,slice]
+    u_wo = @views PH.u_wo[j][:,:,slice]
+
+    dax = Dict()
+
+    dax[:ϕ_ML] = Axis(fig[1, 1])
+    dax[:au_hist] = Axis(fig[1, 2], title=L"abs$\left(\nabla_%$j\,\Phi\right)$")
+    dax[:Φ_ϕ0] = Axis(fig[1, 3], title=L"$\Phi - \varphi_0$")
+    dax[:bal] = Axis(fig[2, 1],
+        title=L"balancing $\langle \chi^{2}\rangle$",
+        xlabel=L"$\lambda$",
+        xticklabelsize=8pt,
+        yticklabelsize=8pt,
+    )
+    dax[:Φ_ϕ1_wo] = Axis(fig[2, 2], title=L"$\Phi - \varphi_1$ (after step 1)")
+    dax[:Φ_ϕ1] = Axis(fig[2, 3], title=L"$\Phi - \varphi_1$ (final)")
+    
+    # local guess of phase map
+    show_map!(dax[:ϕ_ML], oi(ϕ_ML), L"$\Phi$", oi(S_wo); cm=:roma, cr=(-π, π))
+
+    # derivative histogram
+    bins = range(0, π, nbins + 1)
+    clrs = [mean((lb, rb)) < PH.au_max[j] ? col_in : (col_out, alpha_out) for (lb, rb) in zip(bins[1:end-1], bins[2:end])]
+    hist!(dax[:au_hist], abs.(u_wo[Sj_wo]), bins=bins, color=clrs)
+    hideydecorations!(dax[:au_hist])
+
+    # deviation after gradient based estimate 
+    Φ_ϕ0 = f_2π(ϕ_ML - ϕ0)
+    mi, ma = min(Φ_ϕ0[S_wo]...), max(Φ_ϕ0[S_wo]...)
+    bins = range(mi, ma, nbins+1)
+
+    hist!(dax[:Φ_ϕ0], Φ_ϕ0[S_wo], bins=bins, scale_to=1)
+    #hist!(dax[:Φ_ϕ0], Φ_ϕ0[S], bins=bins, color=:blue, scale_to=1)
+    hideydecorations!(dax[:Φ_ϕ0])
+
+    # balancing local and gradient
+    mi, ma = min(PH.χ2s_1...), max(PH.χ2s_1...)
+    bal_1 = (PH.χ2s_1 .- mi) ./ (ma - mi)
+    lines!(dax[:bal], PH.λs_1, bal_1, color=:red, label=L"step $1$")
+    scatter!(dax[:bal], PH.λs_1, bal_1, color=:red)
+    mi, ma = min(PH.χ2s_2...), max(PH.χ2s_2...)
+    bal_2 = (PH.χ2s_2 .- mi) ./ (ma - mi)
+    lines!(dax[:bal], PH.λs_2, bal_2, color=:blue, label=L"step $2$")
+    scatter!(dax[:bal], PH.λs_2, bal_2, color=:blue)
+    hideydecorations!(dax[:bal])
+    axislegend(dax[:bal], merge=true, unique=true, labelsize=10pt, position = :ct)
+
+    # deviation histogram after first balancing step
+    bins = range(-π, π, nbins + 1)
+    clrs = [PH.Δϕ1_min <= mean((lb, rb)) <= PH.Δϕ1_max ? col_in : (col_out, alpha_out) for (lb, rb) in zip(bins[1:end-1], bins[2:end])]
+    hideydecorations!(dax[:Φ_ϕ1_wo])
+    hist!(dax[:Φ_ϕ1_wo], (ϕ_ML - ϕ1_wo)[S_wo], bins=bins, color=clrs)
+    
+    # (final) deviation histogram after second balancing step
+    Φ_ϕ1 = f_2π(ϕ_ML - ϕ1)
+    mi, ma = min(Φ_ϕ1[S_wo]...), max(Φ_ϕ1[S_wo]...)
+    bins = range(mi, ma, nbins+1)
+
+    hist!(dax[:Φ_ϕ1], Φ_ϕ1[S_wo], bins=bins, scale_to=1, color=(col_out, alpha_out))
+    hist!(dax[:Φ_ϕ1], Φ_ϕ1[S], bins=bins, color=:blue, scale_to=1)
+    hideydecorations!(dax[:Φ_ϕ1])
+    
+    # return figure and axes
+    (fig, dax)
 end

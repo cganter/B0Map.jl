@@ -4,6 +4,8 @@ import B0Map as BM
 
 BLAS.set_num_threads(1)
 
+include("ph_util.jl")
+
 # read the HDF5 file
 fid = h5open("test/data/two_echoes/20241024_171954_702_ImDataParamsBMRR_subspace2comp_wfi.h5", "r");
 obj_data = read(fid["ImDataParams"]);
@@ -53,12 +55,13 @@ fitopt.K = [3, 3, 3]
 fitopt.R2s_rng = [0.0, 0.0]
 fitopt.redundancy = 100
 fitopt.subsampling = :fibonacci
-fitopt.remove_gradient_outliers = true
-fitopt.remove_local_outliers = true
+fitopt.balance = true
 fitopt.locfit = false # we only want to reconstruct a single slice
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
-fitopt.diagnostics = true;
+fitopt.diagnostics = true
+fitopt.remove_gradient_outliers = true
+fitopt.remove_local_outliers = true
 
 # set up Fourier Kernel
 Nρ = size(data)[1:3]
@@ -108,7 +111,7 @@ BM.calc_par(fitpar_loc_phs, fitopt, x -> BM.coil_sensitivities(x)[1], c_loc_phs)
 
 #
 
-ϕ_ML_sl = @views res.PH.ϕ_ML[:,:,cor_sl]
+ϕ_ML_sl = deepcopy(res.PH.ϕ_ML[:,:,cor_sl])
 ϕ_ML_sl[noS_phs_sl] .= NaN
 ϕ_loc[noS_sl] .= NaN
 ϕ_phs_sl = @views fitpar.ϕ[:,:,cor_sl]
@@ -132,7 +135,7 @@ fig = Figure(size = (width, height))
 # -------------------------------------------------
 
 ax = Axis(fig[1, 1],
-    title=L"$$PDFF (ML)",
+    title=L"$$PDFF: $\Phi$",
 )
 
 heatmap!(ax,
@@ -151,7 +154,7 @@ Label(fig[1, 1, TopLeft()], "A",
 # -------------------------------------------------
 
 ax = Axis(fig[1, 2],
-    title=L"$\varphi$ (ML)",
+    title=L"$\Phi$",
 )
 
 heatmap!(ax,
@@ -169,7 +172,7 @@ Label(fig[1, 2, TopLeft()], "B",
 # -------------------------------------------------
 
 ax = Axis(fig[1, 3],
-    title=L"$\varphi \in S$ (ML)",
+    title=L"$\Phi \in S$",
 )
 
 heatmap!(ax,
@@ -196,7 +199,7 @@ Colorbar(fig[1, 4],
 # -------------------------------------------------
 
 ax = Axis(fig[2, 1],
-    title=L"PDFF ($\varphi^{(1)}$ + ML)",
+    title=L"PDFF: $\Phi\left(\varphi^{(1)}\right)$",
 )
 
 heatmap!(ax,
@@ -234,7 +237,7 @@ Label(fig[2, 3, TopLeft()], "F",
 # -------------------------------------------------
 
 ax = Axis(fig[2, 2],
-    title=L"$\varphi^{(1)}$ + ML",
+    title=L"$\Phi\left(\varphi^{(1)}\right)$",
 )
 
 heatmap!(ax,
@@ -328,6 +331,11 @@ Colorbar(fig[3, 4],
 =#
 
 display(fig)
+
+## show workflow
+
+(fig_wf, _) = phaser_workflow!(res.PH, slice = cor_sl, oi= x -> rotl90(x[:,end:-1:1]))
+display(fig_wf)
 
 ##
 

@@ -7,9 +7,8 @@ include("ph_util.jl")
 BLAS.set_num_threads(1)
 
 # ISMRM challenge 2012 data sets:
-
-data_set = 5
-slice = 5
+#data_set, slice = 5, 5
+data_set, slice = 12, 3
 
 # 1: tibia, tra
 # 2: upper body, cor
@@ -29,16 +28,17 @@ slice = 5
 # 16: torso, sag
 # 17: shoulder, cor
 
+# set PHASER parameters
 fitopt = BM.fitOpt()
 fitopt.K = [5, 5]
 fitopt.redundancy = Inf
 fitopt.diagnostics = true
-fitopt.balance = true
-fitopt.remove_local_outliers = true
 fitopt.os_fac = [1.3]
 
+# apply PHASER
 cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
 
+# generate image
 (fig, dax) = gen_fig_ISMRM(cal;
     width = 800,
     height = 800,
@@ -46,13 +46,19 @@ cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
     cm_fat = :imola,
 )
 
+# show it
 display(fig)
 
-PH = cal.PH.PH;
+(fig_wf, _) = phaser_workflow!(cal.PH.PH, oi=orient_ISMRM(data_set))
+display(fig_wf)
 
-##
+## save results
 
+# file name
 fig_name = "ismrm_ds_" * string(data_set) * "_sl_" * string(slice)
+# save svg
 save(fig_name * ".svg", fig)
-run(`/home/cganter/bin/svg2eps $fig_name`)
+# to generate an eps file, svg2eps can be used (on Linux)
+run(`/home/cganter/bin/svg2eps $fig_name`) # just set the path which applies to you
+# generate a pdf for rapid complilation in Overleaf.
 run(`epspdf $fig_name".eps"`)

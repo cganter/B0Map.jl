@@ -143,7 +143,7 @@ end
 Calculate dimension of smooth subspace (== number of free (real) parameters).
 """
 function Nfree(bf::BFourierLin{N}) where N
-    2N + prod(2 .* bf.K .+ 1)
+    N + prod(2 .* bf.K .+ 1)
 end
 
 """

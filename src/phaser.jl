@@ -119,7 +119,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
     @timeit to "generate subsampling masks" begin
         print("Generate subsampling masks ... ")
 
-        (S, S_c, S_t, Sj, Sj_c, Sj_t) = subsample_mask(fitpar, fitopt, bs)
+        (S, S_c, S_t, Sj, Sj_c, Sj_t) = subsample_mask_new(fitpar, fitopt, bs)
         szS = size(S)
         ndS = ndims(S)
         sumS = sum(S)
@@ -128,6 +128,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         sumSj_wo = deepcopy(sumSj)
         S_wo = deepcopy(S)
         Sj_wo = deepcopy(Sj)
+        sumR = sum(fitpar.S)
 
         println("done.")
     end
@@ -175,12 +176,13 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         println("done.")
     end
 
-    # remove outliers, if desired
-    if fitopt.remove_gradient_outliers
-        # ======================================================================
-        # Remove gradient outliers from Sj
-        # ======================================================================
+    # ======================================================================
+    # Remove gradient outliers from Sj, if desired
+    # ======================================================================
 
+    au_hist = au_max = nothing
+    
+    if fitopt.remove_gradient_outliers
         u_wo = deepcopy(u)
         u_c_wo = deepcopy(u_c_wo)
         u_t_wo = deepcopy(u_t_wo)
@@ -281,9 +283,14 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
     # Balancing of agreement with phase factor and derivative
     # ======================================================================
 
+    Δϕ1_hist = Δϕ1_max = nothing
+    u0 = ϕ1_wo = z1_wo = Δϕ1_wo = Δϕ1_min = Δϕ1_max = Δϕ1_hist = BtB = nothing
+    tikh_λ_1 = λ_opt_1 = χ2_opt_1 = λs_1 = χ2s_1 = nothing
+    tikh_λ_2 = λ_opt_2 = χ2_opt_2 = λs_2 = χ2s_2 = nothing
+
     if fitopt.balance
         @timeit to "balancing, step 1" begin
-            print("Balancing, step 1...")
+            print("Balancing, step 1 ... ")
 
             @timeit to "prep matrices" begin
                 BtB = calc_BtB(bs, S, to)
@@ -408,7 +415,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             end
 
             @timeit to "balancing, step 2" begin
-                print("Balancing, step 2...")
+                print("Balancing, step 2 ... ")
 
                 @timeit to "prep matrices" begin
                     BtB = calc_BtB(bs, S, to)
@@ -472,8 +479,6 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             end
         else
             ϕ1, z1, Δϕ1 = ϕ1_wo, z1_wo, Δϕ1_wo
-            Δϕ1_hist = Δϕ1_max = nothing
-            tikh_λ_2 = λ_opt_2 = χ2_opt_2 = λs_2 = χ2s_2 = nothing
         end
     else
         ϕ1, z1, Δϕ1 = ϕ0, z0, Δϕ0
@@ -503,7 +508,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
             S, S_c, S_t,
             Sj, Sj_c, Sj_t,
             S_wo, Sj_wo,
-            sumS, sumS_wo, sumSj, sumSj_wo, freePar,
+            sumR, sumS, sumS_wo, sumSj, sumSj_wo, freePar,
             ϕ_ML, R2s_ML, c_ML, χ2_ML,
             z, y, u, u_c, u_t, u_wo, u_c_wo, u_t_wo,
             ϕ0, z0, Δϕ0, y0, u0,
@@ -550,6 +555,173 @@ end
 Auxiliary routines
 ==================================================================  
 =#
+
+"""
+    subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+
+TBW
+"""
+function subsample_mask_new(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+    # some initializations
+    S = deepcopy(fitpar.S)
+    ndS, szS = ndims(S), size(S)
+    ciS = CartesianIndices(S)
+    fiS, liS = first(ciS), last(ciS)
+
+    # define Sj ⊂ S such that derivatives can be taken in direction j
+    ejs = [CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS)) for j in 1:ndS]
+
+    # candidates
+    Sj_cand = falses(szS)
+    Sj_cand[fiS:(liS-fiS)] .= @views S[fiS:(liS-fiS)]
+
+    for ej in ejs
+        Sj_cand[fiS:(liS-fiS)] .&= @views S[fiS+ej:(liS-fiS+ej)]
+    end
+
+    # target number of locations in mask, which contain a derivative in every direction
+    N_sub = ceil(Int, min(fitopt.redundancy * Nfree(bs), 0.99typemax(Int)))
+    
+    
+    N_Sj = min(N_sub, sum(Sj_cand))
+    (Sj_, ciSjs) = subsample_mask_new(N_Sj, Sj_cand, fitopt)
+    Nc = ceil(Int, (1.0 - fitopt.test_frac) * N_Sj)
+    Sj_c_ = falses(szS)
+    Sj_t_ = falses(szS)
+    Sj_c_[ciSjs[1:Nc]] .= true
+    Sj_t_[ciSjs[Nc+1:end]] .= true
+
+    Sj_c = [deepcopy(Sj_c_) for _ in 1:N]
+    Sj_t = [deepcopy(Sj_t_) for _ in 1:N]
+    Sj = [deepcopy(Sj_) for _ in 1:N]
+    
+    S_c = deepcopy(Sj_c[1])
+    S_t = deepcopy(Sj_t[1])
+    for ej in ejs
+        @views S_c[fiS+ej:(liS-fiS+ej)] .|= Sj_c[1][fiS:(liS-fiS)]
+        @views S_t[fiS+ej:(liS-fiS+ej)] .|= Sj_t[1][fiS:(liS-fiS)]
+    end
+
+    S = S_c .| S_t
+    
+    #=
+
+    if N_sub < N_cand
+        (Sj_, ciSj) = subsample_mask(N_sub, Sj_cand, fitopt)
+
+        Nc = ceil(Int, (1.0 - fitopt.test_frac) * N_sub)
+
+        Sj_c_ = falses(szS)
+        Sj_c_[ciSj[1:Nc]] .= true
+
+        Sj_t_ = falses(szS)
+        Sj_t_[ciSj[Nc+1:end]] .= true
+    else
+        Sj_ = deepcopy(Sj_cand)
+        Nt = ceil(Int, fitopt.test_frac * N_cand)
+        (Sj_t_, _) = subsample_mask(Nt, Sj_cand, fitopt)
+        Sj_c_ = deepcopy(Sj_cand)
+        Sj_c_[Sj_t_] .= false
+    end
+
+    Sj_c = [deepcopy(Sj_c_) for _ in 1:N]
+    Sj_t = [deepcopy(Sj_t_) for _ in 1:N]
+    Sj = [deepcopy(Sj_) for _ in 1:N]
+
+    # --------
+
+    S_c = deepcopy(Sj_c[1])
+    S_t = deepcopy(Sj_t[1])
+    
+    S_c = falses(szS)
+    S_t = falses(szS)
+
+    for (Sj_c_, Sj_t_, ej) in zip(Sj_c, Sj_t, ejs)
+        S_c .|= Sj_c_
+        @views S_c[fiS+ej:(liS-fiS+ej)] .|= Sj_c_[fiS:(liS-fiS)]
+
+        S_t .|= Sj_t_
+        @views S_t[fiS+ej:(liS-fiS+ej)] .|= Sj_t_[fiS:(liS-fiS)]
+    end
+
+    S = S_c .| S_t
+    =#
+
+    (S, S_c, S_t, Sj, Sj_c, Sj_t)
+end
+
+"""
+    subsample_mask(N, S_cand, subsampling)
+
+TBW
+"""
+function subsample_mask_new(N, S_cand, fitopt, max_failed = 1000)
+    # check for correct setting
+    @assert fitopt.subsampling ∈ (:fibonacci, :random)
+
+    # some initializations
+    ndS, szS = ndims(S_cand), size(S_cand)
+    N_failed_max = max_failed * N
+    ciS = CartesianIndices(S_cand)
+
+    # found locations
+    S = falses(szS)
+    ciSs = eltype(ciS)[]
+
+    # reduce mask, if possible
+    if fitopt.subsampling == :fibonacci
+        # This approach reduces clustering, observed by conventional random sampling. 
+        # One way to do so would be something like Poisson disk sampling, but this is
+        # not easy to implement efficiently. We therefore use the multidimensional golden
+        # means sampling, as proposed by Peter G. Anderson:
+        # https://doi.org/10.1007/978-94-011-2058-6_1
+
+        # generate ndS-dimensional golden ratios
+        (x, _) = GSS(x -> abs(x * (x + 1)^ndS - 1), (0, 1), 1e-10)
+        z = [x * (x + 1)^n for n in 0:ndS-1]
+
+        # number of found locations
+        found, failed = 0, 0
+
+        # location to look at
+        loc = ones(ndS)
+
+        # subsampling
+        while found < N && failed < N_failed_max
+            # location to look at
+            loc = mod.(loc .+ z, 1)
+            iloc = ceil.(Int, loc .* szS)
+            iloc[iloc.==0] .= 1
+            iloc = min.(iloc, szS)
+            ci = CartesianIndex(iloc...)
+
+            if S_cand[ci]
+                if S[ci]
+                    failed += 1
+                else
+                    S[ci] = true
+                    push!(ciSs, ci)
+
+                    found += 1
+                end
+            end
+        end
+    elseif fitopt.subsampling == :random
+        ciSca = CartesianIndices(S_cand)[S_cand]
+        iS = randperm(fitopt.rng, sum(S_cand))[1:N]
+
+        for i in iS
+            ci = ciSca[i]
+
+            S[ci] = true
+            push!(ciSs, ci)
+        end
+    else
+        error(string("Unsupported argument: subsampling == ", fitopt.subsampling))
+    end
+
+    (S, ciSs)
+end
 
 """
     subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
@@ -906,7 +1078,7 @@ function create_χ2_λ_fun(fitparλ, fitopt, bs,
             A = A, a = a, B = B, b = b,
             A_c = A_c, a_c = a_c, xtx_c = xtx_c, B_c = B_c, b_c = b_c, yty_c = yty_c,
             A_t = A_t, a_t = a_t, xtx_t = xtx_t, B_t = B_t, b_t = b_t, yty_t = yty_t,
-            ϕ_0 = ϕ_0
+            ϕ_0 = ϕ_0, tikh_λ = tikh_λ
 
             @assert λ ≠ 0
 
