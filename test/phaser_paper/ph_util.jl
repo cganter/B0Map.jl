@@ -63,7 +63,11 @@ function ismrm_challenge(
     bs = BM.fourier_lin(Nρ[1:length(fitopt.K)], fitopt.K; os_fac=fitopt.os_fac)
 
     # do the work
-    PH = BM.phaser!(fitpar, fitopt, bs)
+    bm = BM.B0map!(fitpar, fitopt, bs)
+    # ---------
+    #fp, fo = deepcopy(fitpar), deepcopy(fitopt)
+    PH = nothing #BM.phaser!(fp, fo, bs)
+    # ---------
     pdff = BM.fat_fraction_map(fitpar, fitopt)
 
     fitpar_ML = deepcopy(fitpar)
@@ -72,19 +76,19 @@ function ismrm_challenge(
     locfit_0 = deepcopy(fitpar)
     fo_0 = deepcopy(fitopt)
 
-    fitpar_ML.ϕ[:, :] = PH.PH.ϕ_ML
-    fitpar_ML.R2s[:, :] = PH.PH.R2s_ML
-    locfit_0.ϕ[:, :] = PH.PH.ϕ0
+    fitpar_ML.ϕ[:, :] = bm.Φ_ML
+    fitpar_ML.R2s[:, :] = bm.R2s_ML
+    locfit_0.ϕ[:, :] = bm.PH.ϕ[1]
 
     BM.set_num_phase_intervals(locfit_0, fo_0, 0)
-    BM.local_fit(locfit_0, fo_0)
+    BM.local_fit!(locfit_0, fo_0)
 
     pdff_ML = BM.fat_fraction_map(fitpar_ML, fo_ML)
     pdff_0 = BM.fat_fraction_map(locfit_0, fo_0)
     pdff_ref = datPar["ref"][:, :, slice]
 
     # return results
-    return (; fitpar, PH, locfit_0, pdff_ML, pdff_0, pdff, pdff_ref, datPar, data_set)
+    return (; fitpar, PH, locfit_0, pdff_ML, pdff_0, pdff, pdff_ref, datPar, data_set, bm)
 end
 
 function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
@@ -99,22 +103,21 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     S = cal.fitpar.S
     noS = (!).(S)
 
-    ϕ_ML = cal.PH.PH.ϕ_ML
-    ϕ_ML[noS] .= NaN
+    PH = cal.bm.PH
 
-    ϕ0_PH = cal.PH.PH.ϕ0
-    ϕ0_PH[noS] .= NaN
+    Φ_ML = PH.Φ_ML
+    Φ_ML[noS] .= NaN
 
-    ϕ1_PH = cal.PH.PH.ϕ1
-    ϕ1_PH[noS] .= NaN
+    ϕ_PH = PH.ϕ
+    map(ϕ -> ϕ[noS] .= NaN, ϕ_PH)
 
-    bal_rng = (min(ϕ1_PH[S]..., -π), max(ϕ1_PH[S]..., π))
+    bal_rng = (min(ϕ_PH[end][S]..., -π), max(ϕ_PH[end][S]..., π))
 
-    ϕ0_PH_loc = cal.locfit_0.ϕ
-    ϕ0_PH_loc[noS] .= NaN
-
-    ϕ1_PH_loc = cal.fitpar.ϕ
+    ϕ1_PH_loc = cal.locfit_0.ϕ
     ϕ1_PH_loc[noS] .= NaN
+
+    ϕ_PH_loc = cal.fitpar.ϕ
+    ϕ_PH_loc[noS] .= NaN
 
     pdff_ML = cal.pdff_ML
     pdff_0 = cal.pdff_0
@@ -126,19 +129,19 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     pdff[noS] .= NaN
     pdff_ref[noS] .= NaN
 
-    λs_1 = cal.PH.PH.λs_1
-    λs_2 = cal.PH.PH.λs_2
-    χ2s_1 = cal.PH.PH.χ2s_1 ./ cal.PH.PH.sumS_wo
-    χ2s_2 = cal.PH.PH.χ2s_2 ./ cal.PH.PH.sumS
+    #λs_1 = PH.λs_1
+    #λs_2 = PH.λs_2
+    #χ2s_1 = cal.PH.PH.χ2s_1 ./ cal.PH.PH.sumS_wo
+    #χ2s_2 = cal.PH.PH.χ2s_2 ./ cal.PH.PH.sumS
 
     # -------------------------------------------------
 
-    dax[:ϕ_ML] = Axis(fig[1, 1],
+    dax[:Φ_ML] = Axis(fig[1, 1],
         title=L"$\Phi$",
     )
 
-    heatmap!(dax[:ϕ_ML],
-        oi(ϕ_ML),
+    heatmap!(dax[:Φ_ML],
+        oi(Φ_ML),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -151,12 +154,12 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
 
     # -------------------------------------------------
 
-    dax[:ϕ0] = Axis(fig[1, 2],
-        title=L"$\varphi^{(0)}$",
+    dax[:ϕ1] = Axis(fig[1, 2],
+        title=L"$\varphi^{(1)}$",
     )
 
-    heatmap!(dax[:ϕ0],
-        oi(ϕ0_PH),
+    heatmap!(dax[:ϕ1],
+        oi(ϕ_PH[1]),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -169,12 +172,14 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
 
     # -------------------------------------------------
 
-    dax[:ϕ1] = Axis(fig[1, 3],
-        title=L"$\varphi^{(1)}$",
+    n = length(ϕ_PH)
+
+    dax[:ϕ] = Axis(fig[1, 3],
+        title=L"$\varphi^{(%$n)}$",
     )
 
-    heatmap!(dax[:ϕ1],
-        oi(ϕ1_PH),
+    heatmap!(dax[:ϕ],
+        oi(ϕ_PH[end]),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -187,6 +192,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
 
     # -------------------------------------------------
 
+    #=
     dax[:λ_opt] = Axis(fig[2, 1],
         title=L"$\langle \chi^{2}\rangle$",
         xlabel=L"$\lambda$",
@@ -201,15 +207,16 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
         font=:bold,
         padding=(0, -20, 5, 0),
         halign=:right)
+    =#
 
     # -------------------------------------------------
 
-    dax[:ϕ0_loc] = Axis(fig[2, 2],
-        title=L"$\Phi\left(\varphi^{(0)}\right)$",
+    dax[:ϕ1_loc] = Axis(fig[2, 2],
+        title=L"$\Phi\left(\varphi^{(1)}\right)$",
     )
 
-    heatmap!(dax[:ϕ0_loc],
-        oi(ϕ0_PH_loc),
+    heatmap!(dax[:ϕ1_loc],
+        oi(ϕ1_PH_loc),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -222,12 +229,12 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
 
     # -------------------------------------------------
 
-    dax[:ϕ1_loc] = Axis(fig[2, 3],
-        title=L"$\Phi\left(\varphi^{(1)}\right)$",
+    dax[:ϕ_loc] = Axis(fig[2, 3],
+        title=L"$\Phi\left(\varphi^{(%$n)}\right)$",
     )
 
-    heatmap!(dax[:ϕ1_loc],
-        oi(ϕ1_PH_loc),
+    heatmap!(dax[:ϕ_loc],
+        oi(ϕ_PH_loc),
         colormap=cm_phase,
         colorrange=bal_rng,
         nan_color=:black
@@ -259,7 +266,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff_0] = Axis(fig[3, 2],
-        title=L"PDFF: $\Phi\left(φ^{(0)}\right)$",
+        title=L"PDFF: $\Phi\left(φ^{(1)}\right)$",
     )
 
     heatmap!(dax[:pdff_0],
@@ -277,7 +284,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
     # -------------------------------------------------
 
     dax[:pdff] = Axis(fig[3, 3],
-        title=L"PDFF: $\Phi\left(φ^{(1)}\right)$",
+        title=L"PDFF: $\Phi\left(φ^{(%$n)}\right)$",
     )
 
     heatmap!(dax[:pdff],
@@ -310,7 +317,7 @@ function gen_fig_ISMRM(cal; width, height, cm_phase, cm_fat)
         ticklabelsize=8pt,
     )
 
-    for a in (:ϕ_ML, :ϕ0, :ϕ1, :ϕ0_loc, :ϕ1_loc, :pdff_ML, :pdff_0, :pdff)
+    for a in (:Φ_ML, :ϕ1, :ϕ, :ϕ1_loc, :ϕ_loc, :pdff_ML, :pdff_0, :pdff)
         hidedecorations!(dax[a])
     end
 
@@ -474,6 +481,79 @@ function show_hist_Δϕ1!(ax, PH, name; nbins=100, col_in=:blue, col_out=:red, a
     hist!(ax, PH.Δϕ1_wo[PH.S_wo], bins=bins, color=clrs)
 end
 
+function phaser_phase_histograms(PH;
+    width=800,
+    height_per_plot=200,
+    nbins=100,
+    j=1,
+    col_in=:blue, col_out=:red, alpha_out=0.3,
+    cm=:roma,
+    font_pt=12,
+    slice=1,
+    oi=x -> x,
+)
+    nΦ = length(PH.Φ)
+    
+    pt = 4 / 3
+    height = height_per_plot * (nΦ + 1)
+    fig = Figure(size=(width, height), fontsize=font_pt * pt)
+
+    Φ_col, T_col, ∇Φ_col, Tj_col = 1, 2, 3, 4
+
+    ttls = Matrix{LaTeXString}(undef, nΦ + 1, 4)
+    for n in 0:nΦ
+        if n == 0
+            ttls[1, Φ_col] = L"$\Phi_{ML}$"
+            ttls[1, ∇Φ_col] = L"$\nabla_1\Phi_{ML}$"
+            ttls[1, T_col] = L"$S$"
+            ttls[1, Tj_col] = L"$S_{1}$"
+        else
+            ttls[n+1, Φ_col] = L"$\Phi^{(%$n)}$"
+            ttls[n+1, ∇Φ_col] = L"$\nabla_1\Phi^{(%$n)}$"
+            ttls[n+1, T_col] = L"$T^{(%$n)}$"
+            ttls[n+1, Tj_col] = L"$T_{1}^{(%$n)}$"
+        end
+    end
+
+    axs = [Axis(fig[i+1, j], title=ttls[i+1, j]) for i in 0:nΦ, j in 1:4]
+
+    for n in 0:nΦ
+        hideydecorations!(axs[n+1, Φ_col])
+        hideydecorations!(axs[n+1, ∇Φ_col])
+        hidedecorations!(axs[n+1, T_col])
+        hidedecorations!(axs[n+1, Tj_col])
+    end
+
+    mi, ma = min(PH.Φ_ML[PH.S]...), max(PH.Φ_ML[PH.S]...)
+    bins = range(mi, ma, nbins + 1)
+    hist!(axs[1, Φ_col], PH.Φ_ML[PH.S], bins=bins, scale_to=1, color=(col_out, alpha_out))
+
+    mi, ma = min(PH.∇Φ_ML[1][PH.Sj[1]]...), max(PH.∇Φ_ML[1][PH.Sj[1]]...)
+    bins = range(mi, ma, nbins + 1)
+    hist!(axs[1, ∇Φ_col], PH.∇Φ_ML[1][PH.Sj[1]], bins=bins, scale_to=1, color=(col_out, alpha_out))
+    hist!(axs[1, ∇Φ_col], PH.∇Φ_ML[1][PH.Tj[1][1]], bins=bins, scale_to=1, color=:blue)
+    heatmap!(axs[1, T_col], oi(PH.S))
+    heatmap!(axs[1, Tj_col], oi(PH.Sj[1]))
+
+
+    for i in 1:nΦ
+        mi, ma = min(PH.Φ[i][PH.S]...), max(PH.Φ[i][PH.S]...)
+        bins = range(mi, ma, nbins + 1)
+        hist!(axs[i+1, Φ_col], PH.Φ[i][PH.S], bins=bins, scale_to=1, color=(col_out, alpha_out))
+        hist!(axs[i+1, Φ_col], PH.Φ[i][PH.T[i+1]], bins=bins, scale_to=1, color=:blue)
+
+        mi, ma = min(PH.∇Φ[i][1][PH.Sj[1]]...), max(PH.∇Φ[i][1][PH.Sj[1]]...)
+        bins = range(mi, ma, nbins + 1)
+        hist!(axs[i+1, ∇Φ_col], PH.∇Φ[i][1][PH.Sj[1]], bins=bins, scale_to=1, color=(col_out, alpha_out))
+        hist!(axs[i+1, ∇Φ_col], PH.∇Φ[i][1][PH.Tj[i][1]], bins=bins, scale_to=1, color=:blue)
+
+        heatmap!(axs[i+1, T_col], oi(PH.T[i+1]))
+        heatmap!(axs[i+1, Tj_col], oi(PH.Tj[i+1][1]))
+    end
+
+    (fig, axs)
+end
+
 function phaser_workflow!(PH;
     width=800,
     height=500,
@@ -483,7 +563,7 @@ function phaser_workflow!(PH;
     cm=:roma,
     font_pt=12,
     slice=1,
-    oi = x -> x,
+    oi=x -> x,
 )
     pt = 4 / 3
     fig = Figure(size=(width, height), fontsize=font_pt * pt)
@@ -492,15 +572,15 @@ function phaser_workflow!(PH;
     f_2π = ϕ -> mod.(ϕ .+ π, 2π) .- π
 
     # several shorthands
-    S = @views PH.S[:,:,slice]
-    S_wo = @views PH.S_wo[:,:,slice]
-    Sj_wo = @views PH.Sj_wo[j][:,:,slice]
+    S = @views PH.S[:, :, slice]
+    S_wo = @views PH.S_wo[:, :, slice]
+    Sj_wo = @views PH.Sj_wo[j][:, :, slice]
 
-    ϕ_ML = @views PH.ϕ_ML[:,:,slice]
-    ϕ0 = @views PH.ϕ0[:,:,slice]
-    ϕ1 = @views PH.ϕ1[:,:,slice]
-    ϕ1_wo = @views PH.ϕ1_wo[:,:,slice]
-    u_wo = @views PH.u_wo[j][:,:,slice]
+    ϕ_ML = @views PH.ϕ_ML[:, :, slice]
+    ϕ0 = @views PH.ϕ0[:, :, slice]
+    ϕ1 = @views PH.ϕ1[:, :, slice]
+    ϕ1_wo = @views PH.ϕ1_wo[:, :, slice]
+    u_wo = @views PH.u_wo[j][:, :, slice]
 
     dax = Dict()
 
@@ -515,7 +595,7 @@ function phaser_workflow!(PH;
     )
     dax[:Φ_ϕ1_wo] = Axis(fig[2, 2], title=L"$\Phi - \varphi_1$ (after step 1)")
     dax[:Φ_ϕ1] = Axis(fig[2, 3], title=L"$\Phi - \varphi_1$ (final)")
-    
+
     # local guess of phase map
     show_map!(dax[:ϕ_ML], oi(ϕ_ML), L"$\Phi$", oi(S_wo); cm=:roma, cr=(-π, π))
 
@@ -528,7 +608,7 @@ function phaser_workflow!(PH;
     # deviation after gradient based estimate 
     Φ_ϕ0 = f_2π(ϕ_ML - ϕ0)
     mi, ma = min(Φ_ϕ0[S_wo]...), max(Φ_ϕ0[S_wo]...)
-    bins = range(mi, ma, nbins+1)
+    bins = range(mi, ma, nbins + 1)
 
     hist!(dax[:Φ_ϕ0], Φ_ϕ0[S_wo], bins=bins, scale_to=1)
     #hist!(dax[:Φ_ϕ0], Φ_ϕ0[S], bins=bins, color=:blue, scale_to=1)
@@ -544,23 +624,23 @@ function phaser_workflow!(PH;
     lines!(dax[:bal], PH.λs_2, bal_2, color=:blue, label=L"step $2$")
     scatter!(dax[:bal], PH.λs_2, bal_2, color=:blue)
     hideydecorations!(dax[:bal])
-    axislegend(dax[:bal], merge=true, unique=true, labelsize=10pt, position = :ct)
+    axislegend(dax[:bal], merge=true, unique=true, labelsize=10pt, position=:ct)
 
     # deviation histogram after first balancing step
     bins = range(-π, π, nbins + 1)
     clrs = [PH.Δϕ1_min <= mean((lb, rb)) <= PH.Δϕ1_max ? col_in : (col_out, alpha_out) for (lb, rb) in zip(bins[1:end-1], bins[2:end])]
     hideydecorations!(dax[:Φ_ϕ1_wo])
-    hist!(dax[:Φ_ϕ1_wo], (ϕ_ML - ϕ1_wo)[S_wo], bins=bins, color=clrs)
-    
+    hist!(dax[:Φ_ϕ1_wo], (ϕ_ML-ϕ1_wo)[S_wo], bins=bins, color=clrs)
+
     # (final) deviation histogram after second balancing step
     Φ_ϕ1 = f_2π(ϕ_ML - ϕ1)
     mi, ma = min(Φ_ϕ1[S_wo]...), max(Φ_ϕ1[S_wo]...)
-    bins = range(mi, ma, nbins+1)
+    bins = range(mi, ma, nbins + 1)
 
     hist!(dax[:Φ_ϕ1], Φ_ϕ1[S_wo], bins=bins, scale_to=1, color=(col_out, alpha_out))
     hist!(dax[:Φ_ϕ1], Φ_ϕ1[S], bins=bins, color=:blue, scale_to=1)
     hideydecorations!(dax[:Φ_ϕ1])
-    
+
     # return figure and axes
     (fig, dax)
 end

@@ -1,4 +1,4 @@
-using LinearAlgebra, ChunkSplitters, StatsBase, Optim, Random, TimerOutputs, Compat
+using LinearAlgebra, LinearSolve, ChunkSplitters, StatsBase, Optim, Random, TimerOutputs, Compat
 import VP4Optim as VP
 @compat public BSmooth, calc, phase_map, phaser, smooth_projection!
 
@@ -53,6 +53,953 @@ no generic implementation is provided.
 function phase_map(::BSmooth, ::AbstractVector) end
 
 """
+    B0map!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+
+TBW
+"""
+function B0map!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+    # timing will always be monitored
+    to = TimerOutput()
+    @timeit to "B0 map" begin
+
+        # ======================================================================
+        # check dimension
+        # ======================================================================
+
+        @assert N == ndims(fitpar.S)
+
+        # ======================================================================
+        # subsampling mask
+        # ======================================================================
+
+        (S, Sj) = subsample_mask_testing(fitpar, fitopt, bs, to)
+        R = fitpar.S
+        noR = (!).(R)
+        noS = (!).(S)
+
+        # ======================================================================
+        # local estimate
+        # ======================================================================
+
+        @timeit to "local ML estimate" begin
+            print("Local ML estimate ... ")
+
+            fitpar_ML = fitPar(fitpar.grePar, fitpar.data, S)
+
+            fitopt_ML = deepcopy(fitopt)
+            fitopt_ML.optim = fitopt.optim_phaser
+
+            local_fit!(fitpar_ML, fitopt_ML)
+
+            Φ_ML, R2s_ML = fitpar_ML.ϕ, fitpar_ML.R2s
+            Φ_ML[noS] .= NaN
+            R2s_ML[noS] .= NaN
+
+            println("done.")
+        end
+
+        # ======================================================================
+        # apply PHASER
+        # ======================================================================
+
+        println("PHASER Begin ...")
+
+        PH = phaser!(Φ_ML, S, Sj, R, fitpar, fitopt, bs, to)
+
+        fitpar.ϕ[R] .= @views PH.ϕ[end][R]
+
+        println("... PHASER End")
+
+        # ======================================================================
+        # Final local fit, if desired
+        # ======================================================================
+
+        if fitopt.local_fit
+            @timeit to "final local fit" begin
+                print("Final local fit ... ")
+
+                fitopt_loc = deepcopy(fitopt)
+                set_num_phase_intervals(fitpar, fitopt_loc, 0)
+
+                local_fit!(fitpar, fitopt_loc)
+
+                ϕ_loc, R2s_loc = fitpar.ϕ, fitpar.R2s
+                ϕ_loc[noR] .= NaN
+                R2s_loc[noR] .= NaN
+
+                println("done.")
+            end
+        else
+            ϕ_loc = R2s_loc = nothing
+        end
+    end
+
+    for ϕ in PH.ϕ
+        ϕ[noR] .= NaN
+    end
+
+    # return results
+    (; to, PH, Φ_ML, R2s_ML, ϕ_loc, R2s_loc, S, Sj, R)
+end
+
+"""
+    phaser!(Φ_loc, S, Sj, R, fitopt::FitOpt, bs::BSmooth{N}, to::TimerOutput) where {N}
+
+Actual implementation of PHASER
+"""
+function phaser!(Φ_ML, S, Sj, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutput) where {N}
+
+    @timeit to "phaser!" begin
+        # ======================================================================
+        # some preps
+        # ======================================================================
+
+        @assert ndims(S) == N
+        info = Dict()
+        T, Tj = [S], Vector{typeof(S)}[]
+        ∇Φ_ML = map(map_2π, ∇j_(Φ_ML, Sj))
+        ϕ, Φ, ∇Φ = typeof(Φ_ML)[], typeof(Φ_ML)[], typeof(∇Φ_ML)[]
+        remove_gradient_outliers!(Tj, Sj, S, ∇Φ_ML, info, to)
+
+        # ======================================================================
+        # gradient-based estimate
+        # ======================================================================
+        gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, bs, info, to)
+
+        # ======================================================================
+        # PHASER loop
+        # ======================================================================
+
+        if fitopt.λ > 0
+            println("fixed λ")
+
+            balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs, info, to, :fixed)
+        end
+
+        i_cost = i_data = 1
+
+        while i_data <= fitopt.balance_data
+            println("data: ", i_data, "/", fitopt.balance_data)
+
+            balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs, info, to, :data)
+
+            masks_changed(T, Tj, i_data) || break
+
+            i_data += 1
+        end
+
+        while i_cost <= fitopt.balance_cost
+            println("cost: ", i_cost, "/", fitopt.balance_cost)
+
+            balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs, info, to, :cost)
+
+            masks_changed(T, Tj, i_cost) || break
+
+            i_cost += 1
+        end
+
+        # ======================================================================
+        # return results
+        # ======================================================================
+
+        (; ϕ, Φ_ML, ∇Φ_ML, Φ, ∇Φ, T, Tj, S, Sj, R, info)
+    end
+end
+
+"""
+    subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+
+TBW
+"""
+function subsample_mask_testing(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}, to::TimerOutput) where {N}
+    @timeit to "generate subsampling masks" begin
+        print("Generate subsampling masks ... ")
+
+        # some initializations
+        R = deepcopy(fitpar.S)
+        ndR, szR = ndims(R), size(R)
+        ciR = CartesianIndices(R)
+        fiR, liR = first(ciR), last(ciR)
+
+        # define Sj ⊂ S such that derivatives can be taken in direction j
+        ejs = [CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndR)) for j in 1:ndR]
+
+        # candidates
+        Sj_ = falses(szR)
+        Sj_[fiR:(liR-fiR)] .= @views R[fiR:(liR-fiR)]
+
+        for ej in ejs
+            Sj_[fiR:(liR-fiR)] .&= @views R[fiR+ej:(liR-fiR+ej)]
+        end
+
+        # target number of locations in mask, which contain a derivative in every direction
+        N_sub = ceil(Int, min(fitopt.redundancy * Nfree(bs), 0.99typemax(Int)))
+
+        N_sub < sum(Sj_) && ((Sj_, _) = subsample_mask_testing(N_sub, Sj_, fitopt))
+
+        S = deepcopy(Sj_)
+
+        for ej in ejs
+            S[fiR+ej:(liR-fiR+ej)] .|= @views Sj_[fiR:(liR-fiR)]
+        end
+
+        Sj = [deepcopy(Sj_) for _ in 1:N]
+
+        println("done.")
+    end
+
+    (S, Sj)
+end
+
+"""
+    subsample_mask(N, Scand, subsampling)
+
+TBW
+"""
+function subsample_mask_testing(N, Scand, fitopt, max_failed=1000)
+    # check for correct setting
+    @assert fitopt.subsampling ∈ (:fibonacci, :random)
+
+    # some initializations
+    ndS, szS = ndims(Scand), size(Scand)
+    N_failed_max = max_failed * N
+    ciS = CartesianIndices(Scand)
+
+    # found locations
+    S = falses(szS)
+    ciSs = eltype(ciS)[]
+
+    # reduce mask, if possible
+    if fitopt.subsampling == :fibonacci
+        # This approach reduces clustering, observed by conventional random sampling. 
+        # One way to do so would be something like Poisson disk sampling, but this is
+        # not easy to implement efficiently. We therefore use the multidimensional golden
+        # means sampling, as proposed by Peter G. Anderson:
+        # https://doi.org/10.1007/978-94-011-2058-6_1
+
+        # generate ndS-dimensional golden ratios
+        (x, _) = GSS(x -> abs(x * (x + 1)^ndS - 1), (0, 1), 1e-10)
+        z = [x * (x + 1)^n for n in 0:ndS-1]
+
+        # number of found locations
+        found, failed = 0, 0
+
+        # location to look at
+        loc = ones(ndS)
+
+        # subsampling
+        while found < N && failed < N_failed_max
+            # location to look at
+            loc = mod.(loc .+ z, 1)
+            iloc = ceil.(Int, loc .* szS)
+            iloc[iloc.==0] .= 1
+            iloc = min.(iloc, szS)
+            ci = CartesianIndex(iloc...)
+
+            if Scand[ci]
+                if S[ci]
+                    failed += 1
+                else
+                    S[ci] = true
+                    push!(ciSs, ci)
+
+                    found += 1
+                end
+            end
+        end
+    elseif fitopt.subsampling == :random
+        ciSca = CartesianIndices(Scand)[Scand]
+        iS = randperm(fitopt.rng, sum(Scand))[1:N]
+
+        for i in iS
+            ci = ciSca[i]
+
+            S[ci] = true
+            push!(ciSs, ci)
+        end
+    else
+        error(string("Unsupported argument: subsampling == ", fitopt.subsampling))
+    end
+
+    (S, ciSs)
+end
+
+"""
+    masks_changed(T, Tj)
+
+TBW
+"""
+function masks_changed(T, Tj, n)
+    # the local estimate should be calculated at least once
+    n > 1 || return true
+
+    for j in 1:n-1
+        T[end-j] == T[end] && Tj[end-j] == Tj[end] && return false
+    end
+
+    return true
+end
+
+"""
+    remove_gradient_outliers!(Tj, ∇Φ, msk, info, to)
+
+TBW
+"""
+function remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
+    @timeit to "remove gradient outliers" begin
+        haskey(info, :outliers) || (info[:outliers] = Dict())
+
+        haskey(info[:outliers], :gradient) || (info[:outliers][:gradient] = Dict())
+        ig = info[:outliers][:gradient]
+
+        # first we determine the maximally allowed u in each direction        
+        a∇Φ_hist = Histogram[]
+        a∇Φ_max = Float64[]
+
+        for j in 1:ndims(S)
+            # setting (2n)^(1/3) ("Rice rule") for the number bins in the histogram was motivated in 
+            # https://doi.org/10.2307/2288074
+            nbins = ceil(Int, (2sum(Sj[j]))^(1 / 3))
+            # store differences
+            a∇Φ = abs.(∇Φ[j][Sj[j]])
+            # boundaries of bin intervals
+            edges = @views range(0.0, max(a∇Φ...), nbins + 1)
+            # median over Sj
+            med = @views median(a∇Φ)
+            # the first histogram peak (starting from zero) corresponds to ∇ξ = 0 (see article)
+            # and due to dimensional arguments, the majority u's should be part of it.
+            # the index `iemin` of the median can therefore be used as a starting point
+            iemin = findfirst(e -> e > med, edges)
+            # generate the histogram curve based upon the bins defined above
+            push!(a∇Φ_hist, fit(Histogram, a∇Φ, edges))
+            # it is difficult to formulate a general criterion, how to choose a max. allowed
+            # value of `abs(u)`. Assuming that there is a relevant second peak, one can search
+            # for the minimum of the histogram for `u > median(abs(u))`
+            # if there is outlier, this should autmatically include the relevant part of the 
+            # histogram (which a purely local derivative cannot provide with similar stability)
+            fimi = @views findmin(a∇Φ_hist[end].weights[iemin+1:end])[2]
+            # define cutoff value
+            push!(a∇Φ_max, edges[fimi+iemin])
+        end
+
+        haskey(ig, :a∇Φ_hist) || (ig[:a∇Φ_hist] = typeof(a∇Φ_hist)[])
+        push!(ig[:a∇Φ_hist], a∇Φ_hist)
+        haskey(ig, :a∇Φ_max) || (ig[:a∇Φ_max] = typeof(a∇Φ_max)[])
+        push!(ig[:a∇Φ_max], a∇Φ_max)
+
+        push!(Tj, deepcopy(Sj))
+
+        for j in 1:ndims(S)
+            @. Tj[end][j][Sj[j]] = @views abs(∇Φ[j][Sj[j]]) < a∇Φ_max[j]
+        end
+    end
+end
+
+"""
+    remove_local_outliers!(T, Φ, msk, info, to)
+
+TBW
+"""
+function remove_local_outliers!(T, S, Φ, info, to)
+    @timeit to "remove local outliers" begin
+        haskey(info, :outliers) || (info[:outliers] = Dict())
+
+        haskey(info[:outliers], :local) || (info[:outliers][:local] = Dict())
+        ig = info[:outliers][:local]
+
+        # setting (2n)^(1/3) ("Rice rule") for the number bins in the histogram was motivated in 
+        # https://doi.org/10.2307/2288074
+        nbins = ceil(Int, (2sum(S))^(1 / 3))
+        # boundaries of bin intervals
+        edges = @views range(min(Φ[S]...), max(Φ[S]...), nbins + 1)
+        # generate the histogram curve based upon the bins defined above
+        Φ_hist = @views fit(Histogram, Φ[S], edges)
+
+        # we assume the largest peak to correspond to the correct solution
+        ip = argmax(Φ_hist.weights)
+        # now we go down on both flanks of the peak until the next local minimum is reached
+        ip_min = ip_max = ip
+        ip_max_test = ip_max + 1
+        while ip_max_test <= nbins && Φ_hist.weights[ip_max_test] < Φ_hist.weights[ip_max]
+            ip_max = ip_max_test
+            ip_max_test += 1
+        end
+        ip_min_test = ip_min - 1
+        while ip_min_test >= 1 && Φ_hist.weights[ip_min_test] < Φ_hist.weights[ip_min]
+            ip_min = ip_min_test
+            ip_min_test -= 1
+        end
+        Φ_min = 0.5(Φ_hist.edges[1][ip_min] + Φ_hist.edges[1][ip_min+1])
+        Φ_max = 0.5(Φ_hist.edges[1][ip_max] + Φ_hist.edges[1][ip_max-1])
+
+        push!(T, deepcopy(S))
+
+        # these local minima then define the locations to keep in S
+        @. T[end][S] = @views Φ_min <= Φ[S] <= Φ_max
+
+        haskey(ig, :Φ_hist) || (ig[:Φ_hist] = typeof(Φ_hist)[])
+        push!(ig[:Φ_hist], Φ_hist)
+        haskey(ig, :Φ_min) || (ig[:Φ_min] = typeof(Φ_min)[])
+        push!(ig[:Φ_min], Φ_min)
+        haskey(ig, :Φ_max) || (ig[:Φ_max] = typeof(Φ_max)[])
+        push!(ig[:Φ_max], Φ_max)
+    end
+end
+
+"""
+    gradient_based_estimate!(ϕ, Tj, S, R, ∇Φ, Φ, μ, bs, info, to)
+
+TBW
+"""
+function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, bs, info, to)
+    @timeit to "gradient-based estimate" begin
+        print("Gradient-based estimate ... ")
+
+        @timeit to "prep matrices" begin
+            # MPI estimate
+            ∇Bt∇B = calc_∇Bt∇B(bs, Tj[end], to)
+            ∇Bt∇Φ = calc_∇Btx(bs, Tj[end], ∇Φ_ML, to)
+        end
+
+        haskey(info, :gradient) || (info[:gradient] = Dict())
+        ib = info[:gradient]
+
+        ib[:∇Bt∇B] = ∇Bt∇B
+        ib[:∇Bt∇Φ] = ∇Bt∇Φ
+
+        μ = μ_tikh * max(real.(diag(∇Bt∇B))...)
+        prob = LinearSolve.LinearProblem(∇Bt∇B + μ * I, ∇Bt∇Φ)
+        sol = LinearSolve.solve(prob)
+        c = sol.u
+
+        # calculate phase map with median limited to (-π, π]
+        push!(ϕ, zeros(size(R)))
+        ϕ[end][R] .= @views phase_map(bs, c, to)[R]
+
+        calc_phase_offset!(ϕ[end], Φ_ML, S, R)
+
+        # improve masks
+        push!(Φ, map_2π(Φ_ML - ϕ[end]))
+        push!(∇Φ, map(map_2π, ∇j_(Φ[end], Sj)))
+        push!(T, S)
+        remove_gradient_outliers!(Tj, Sj, S, ∇Φ[end], info, to)
+
+        println("done.")
+    end
+end
+
+"""
+    balanced_estimate!(ϕ, T, Tj, S, R, Φ, ∇Φ, fitpar, fitopt, bs, info, to, λ_mode)
+
+TBW
+"""
+function balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs::BSmooth{N}, info, to, λ_mode) where {N}
+    @timeit to "balanced estimate" begin
+        @assert λ_mode ∈ (:fixed, :cost, :data)
+
+        λ_mode == :fixed && 0 < fitopt.λ ≤ 1 && print("fixed balanced estimate ... ")
+        λ_mode == :cost && print("balancing with cost function ... ")
+        λ_mode == :data && print("balancing with data ... ")
+
+        @timeit to "prep matrices" begin
+            # MPI estimate
+            BtB = calc_BtB(bs, T[end], to)
+            BtΦ = calc_Btx(bs, T[end], Φ[end], to)
+            ∇Bt∇B = calc_∇Bt∇B(bs, Tj[end], to)
+            ∇Bt∇Φ = calc_∇Btx(bs, Tj[end], ∇Φ[end], to)
+        end
+
+        haskey(info, :balanced) || (info[:balanced] = Dict())
+        haskey(info[:balanced], λ_mode) || (info[:balanced][λ_mode] = Dict())
+        ib = info[:balanced][λ_mode]
+
+        haskey(ib, :BtB) || (ib[:BtB] = typeof(BtB)[])
+        haskey(ib, :BtΦ) || (ib[:BtΦ] = typeof(BtΦ)[])
+        haskey(ib, :∇Bt∇B) || (ib[:∇Bt∇B] = typeof(∇Bt∇B)[])
+        haskey(ib, :∇Bt∇Φ) || (ib[:∇Bt∇Φ] = typeof(∇Bt∇Φ)[])
+
+        push!(ib[:BtB], BtB)
+        push!(ib[:BtΦ], BtΦ)
+        push!(ib[:∇Bt∇B], ∇Bt∇B)
+        push!(ib[:∇Bt∇Φ], ∇Bt∇Φ)
+
+        push!(ϕ, zeros(size(R)))
+
+        if λ_mode == :fixed && 0 < fitopt.λ ≤ 1
+            (c, _) = c_MPI(BtB, BtΦ, ∇Bt∇B, ∇Bt∇Φ, fitopt.λ, fitopt.μ_tikh)
+
+            # calculate phase map with median limited to [-π, π)
+            ϕ[end][R] .= @views phase_map(bs, real(c[1]), c[2:end], to)[R] .+ ϕ[end-1][R]
+        else
+            Φ2 = ∇Φ2 = 0.0
+            fitoptλ = deepcopy(fitopt)
+
+            if λ_mode == :cost
+                Φ2 = @views sum(abs2.(Φ_ML[T[end]]))
+                for j in 1:N
+                    ∇Φ2 += @views sum(abs2.(∇Φ_ML[j][Tj[end][j]]))
+                end
+                fitparλ = fitpar
+            elseif λ_mode == :data
+                fitparλ = fitPar(fitpar.grePar, fitpar.data, S)
+                fitoptλ.optim = fitopt.optim_balance
+                set_num_phase_intervals(fitparλ, fitoptλ, 0)
+            end
+
+            χ2_λ_fun = create_χ2_λ_fun(fitparλ, fitoptλ, bs, BtB, BtΦ, ∇Bt∇B, ∇Bt∇Φ, Φ2, ∇Φ2, ϕ, to, λ_mode)
+
+            @timeit to "GSS search λ" begin
+                λ_opt, χ2_opt, λs, χ2s = GSS(χ2_λ_fun, (0.0, 1.0), 1e-4; show_all=true)
+            end
+
+            haskey(ib, :λ_opt) || (ib[:λ_opt] = typeof(λ_opt)[])
+            haskey(ib, :χ2_opt) || (ib[:χ2_opt] = typeof(χ2_opt)[])
+            haskey(ib, :λs) || (ib[:λs] = typeof(λs)[])
+            haskey(ib, :χ2s) || (ib[:χ2s] = typeof(χ2s)[])
+
+            push!(ib[:λ_opt], λ_opt)
+            push!(ib[:χ2_opt], χ2_opt)
+            push!(ib[:λs], λs)
+            push!(ib[:χ2s], χ2s)
+
+            # take the best match and calculate the solution on R
+            create_χ2_λ_fun(fitpar, fitoptλ, bs, BtB, BtΦ, ∇Bt∇B, ∇Bt∇Φ, Φ2, ∇Φ2, ϕ, to, λ_mode; calc_ϕ=true)(λ_opt)
+
+            ϕ[end][R] .= @views fitpar.ϕ[R]
+        end
+
+        # make sure that the phase median over S lies within (-π, π]
+        median_shift!(ϕ[end], R)
+        
+        # improve masks
+        push!(Φ, map_2π(Φ_ML - ϕ[end]))
+        push!(∇Φ, map(map_2π, ∇j_(Φ[end], Sj)))
+        remove_local_outliers!(T, S, Φ[end], info, to)
+        remove_gradient_outliers!(Tj, Sj, S, ∇Φ[end], info, to)
+
+        println("done.")
+    end
+end
+
+"""
+    calc_phase_offset!(ϕ, Φ, S, R)
+
+TBW
+"""
+function calc_phase_offset!(ϕ, Φ, S, R)
+    # coefficient b
+    b = @views angle(sum(exp.(im .* (Φ[S] .- ϕ[S]))))
+
+    # calculate the median of ϕ over S
+    ϕ_med = @views median(ϕ[S]) + b
+
+    # limit the median phase to [-π,π)
+    while ϕ_med >= π
+        ϕ_med -= 2π
+        b -= 2π
+    end
+
+    while ϕ_med < -π
+        ϕ_med += 2π
+        b += 2π
+    end
+
+    # add offset to ϕ
+    @. ϕ[R] += b
+
+    nothing
+end
+
+"""
+    calc_generic_offset!(ϕ, z, S)
+
+TBW
+"""
+function calc_generic_offset!(ϕ, z, S, S_orig)
+    # coefficient b
+    b = @views angle(sum(z[S] .* exp.(-im .* ϕ[S])))
+
+    # calculate the median of ϕ over S
+    ϕ_med = @views median(ϕ[S]) + b
+
+    # limit the median phase to [-π,π]
+    while ϕ_med > π
+        ϕ_med -= 2π
+        b -= 2π
+    end
+
+    while ϕ_med < -π
+        ϕ_med += 2π
+        b += 2π
+    end
+
+    # add offset to ϕ
+    @. ϕ[S_orig] += b
+
+    # return offset
+    b
+end
+
+"""
+    median_shift!(ϕ, S)
+
+TBW
+"""
+function median_shift!(ϕ, S)
+    # calculate the median of ϕ over S
+    ϕ_med = @views median(ϕ[S])
+    b = 0.0
+
+    # limit the median phase to [-π,π)
+    while ϕ_med >= π
+        ϕ_med -= 2π
+        b -= 2π
+    end
+
+    while ϕ_med < -π
+        ϕ_med += 2π
+        b += 2π
+    end
+
+    # add offset to ϕ
+    @. ϕ[S] += b
+
+    nothing
+end
+
+"""
+    calc_y(z::AbstractArray, S::AbstractArray)
+
+TBW
+"""
+function calc_y(z::AbstractArray, S::AbstractArray)
+    # check for consistency of arguments
+    (ndS = ndims(S)) != ndims(z) && throw(ArgumentError("z and S not compatible"))
+
+    # compute difference map ∇z
+    (∇z, Sj) = ∇j(z, S)
+
+    # to compute y, we multiply ∇z with conj(z)
+    y = [zeros(ComplexF64, size(z)) for _ in 1:length(∇z)]
+
+    # ciS = CartesianIndices(S)
+    for (∇z_, Sj_, y_) in zip(∇z, Sj, y)
+        @. y_[Sj_] = @views conj(z[Sj_]) * ∇z_[Sj_]
+    end
+
+    # result
+    return (y, Sj)
+end
+
+"""
+    calc_y_(z::AbstractArray, Sj::AbstractVector)
+
+TBW
+"""
+function calc_y_(z::AbstractArray, Sj::AbstractVector)
+    # compute difference map ∇z
+    ∇z = ∇j_(z, Sj)
+
+    # to compute y, we multiply ∇z with conj(z)
+    y = [zeros(ComplexF64, size(z)) for _ in 1:length(∇z)]
+
+    # ciS = CartesianIndices(S)
+    for (∇z_, Sj_, y_) in zip(∇z, Sj, y)
+        @. y_[Sj_] = @views conj(z[Sj_]) * ∇z_[Sj_]
+    end
+
+    # result
+    return y
+end
+
+"""
+    ∇j(A::AbstractArray, S::AbstractArray)
+
+Compute the local finite difference of array `A` along all dimensions of `S`.
+as defined in the article.
+
+# Arguments
+
+- `A::AbstractArray`: arbitrary array, for which the difference shall be computed. `eltype(A)` is only restricted in the sense that it must support subtraction.
+- `S::AbstractArray`: boolean mask, where values of `A` are meaningful. Can be a conventional Array or a BitArray.
+
+# Boundary conditions
+
+- The array `A` can have more dimensions than `S`, but the condition `size(A)[1:ndims(S)] == size(S)` must always be satisfied.
+
+# Return values
+
+The function returns a tuple `(∇A, Sj)`:
+
+- `∇A`: difference array
+- `Sj`: corresponding mask array
+
+with dimensions:
+
+- `size(∇A) == (size(S), ndims(S), size(A)[ndims(S)+1:end])`
+- `size(Sj) == (size(S), ndims(S))`
+
+# Example
+
+```jldoctext
+A = rand(5, 6, 7, 8)
+S = A[:,:,:,1] .> 0.1   # ndims(S) < ndims(A) is allowed
+
+# calculate differences along all directions
+(∇A, Sj) = ∇j(A, S)
+```
+"""
+function ∇j(A::AbstractArray, S::AbstractArray)
+    # check for consistency of arguments
+    ndA, ndS, szA, szS = ndims(A), ndims(S), size(A), size(S)
+    ndA < ndS && throw(ArgumentError("ndims(A) < ndims(S)"))
+    szA[1:ndS] != szS && throw(ArgumentError("A and S not compatible"))
+
+    # set index ranges and allocate space
+    ciS = CartesianIndices(S)
+    fiS, liS = first(ciS), last(ciS)
+
+    # compute Sj
+    Sj = [falses(szS...) for _ in 1:ndS]
+
+    for (j, Sj_) in zip(1:ndS, Sj)
+        ej = CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS))
+
+        for iS in fiS:liS-ej
+            S[iS] && S[iS+ej] && (Sj_[iS] = true)
+        end
+    end
+
+    # result
+    return (∇j_(A, Sj), Sj)
+end
+
+"""
+    ∇j_(A::AbstractArray, Sj::AbstractVector)
+
+Helper function of `∇j`.
+
+# Arguments
+
+- `A::AbstractArray`: defined as in `∇j`
+- `Sj::AbstractVector`: boolean mask vector (format as in `∇j`, but possibly with different content)
+
+# Return values
+
+- `∇A`: vector of difference arrays
+"""
+function ∇j_(A::AbstractArray, Sj::AbstractVector)
+    # check for consistency of arguments
+    ndA, ndS, szA, szS = ndims(A), ndims(Sj[1]), size(A), size(Sj[1])
+    ndA < ndS && throw(ArgumentError("ndims(A) < ndims(S)"))
+    szA[1:ndS] != szS && throw(ArgumentError("A and S not compatible"))
+    szE = szA[ndS+1:ndA]   # possible extra dimensions, not affected by the gradient
+
+    # set index ranges and allocate space
+    ciS, ciE = CartesianIndices(Sj[1]), CartesianIndices(szE)
+    fiS, liS = first(ciS), last(ciS)
+    ∇A = [zeros(eltype(A), szA...) for _ in 1:ndS]
+
+    # compute the local difference, where possible
+    for (j, ∇A_, Sj_) in zip(1:ndS, ∇A, Sj)
+        ej = CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS))
+
+        for iE in ciE
+            for iS in fiS:liS-ej
+                Sj_[iS] && (∇A_[iS, iE] = A[iS+ej, iE] - A[iS, iE])
+            end
+        end
+    end
+
+    # result
+    return ∇A
+end
+
+"""
+    χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_0, μ_tikh)
+
+TBW
+"""
+function create_χ2_λ_fun(fitparλ, fitoptλ, bs, A, a, B, b, Φ2, ∇Φ2, ϕ, to, λ_mode; calc_ϕ=false)
+
+    @timeit to "create_χ2_λ_fun" begin
+        if λ_mode == :cost
+            λ -> let fitparλ = fitparλ, fitoptλ = fitoptλ, A = A, a = a, B = B, b = b, Φ2 = Φ2, ∇Φ2 = ∇Φ2
+
+                (c, mat_λ) = c_MPI(A, a, B, b, λ, fitoptλ.μ_tikh)
+
+                if calc_ϕ
+                    fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end], to)[fitparλ.S] .+ ϕ[end-1][fitparλ.S]
+                end
+
+                λ * Φ2 + (1 - λ) * ∇Φ2 - real(c' * mat_λ * c)
+            end
+        elseif λ_mode == :data
+            λ -> let fitparλ = fitparλ, fitoptλ = fitoptλ, bs = bs,
+                A = A, a = a, B = B, b = b, ϕ = ϕ, to = to
+
+                (c, _) = c_MPI(A, a, B, b, λ, fitoptλ.μ_tikh)
+
+                fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end], to)[fitparλ.S] .+ ϕ[end-1][fitparλ.S]
+
+                @timeit to "local fit" begin
+                    local_fit!(fitparλ, fitoptλ)
+                end
+
+                sum(fitparλ.χ2[fitparλ.S])
+            end
+        end
+    end
+end
+
+"""
+    c_MPI(A, a, B, b, λ, μ_tikh)
+
+TBW
+"""
+function c_MPI(A, a, B, b, λ, μ_tikh)
+    @assert λ ≠ 0
+
+    mat_λ = λ .* A
+    @. mat_λ[2:end, 2:end] += (1 - λ) * B
+    vec_λ = λ .* a
+    @. vec_λ[2:end] += (1 - λ) * b
+
+    μ = μ_tikh * max(real.(diag(mat_λ))...)
+    prob = LinearSolve.LinearProblem(mat_λ + μ * I, vec_λ)
+    sol = LinearSolve.solve(prob)
+
+    # return coefficients
+    (sol.u, mat_λ)
+end
+
+"""
+    χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_0, μ_tikh)
+
+TBW
+"""
+function crete_χ2_λ_fun(fitparλ, fitopt, bs,
+    A, a, B, b,
+    A_c, a_c, xtx_c, B_c, b_c, yty_c,
+    A_t, a_t, xtx_t, B_t, b_t, yty_t,
+    ϕ_0, tikh_λ, to)
+
+    @timeit to "create_χ2_λ_fun" begin
+        λ -> let fitparλ = fitparλ, fitopt = fitopt, bs = bs,
+            A = A, a = a, B = B, b = b,
+            A_c = A_c, a_c = a_c, xtx_c = xtx_c, B_c = B_c, b_c = b_c, yty_c = yty_c,
+            A_t = A_t, a_t = a_t, xtx_t = xtx_t, B_t = B_t, b_t = b_t, yty_t = yty_t,
+            ϕ_0 = ϕ_0, tikh_λ = tikh_λ
+
+            @assert λ ≠ 0
+
+            @timeit to "prep matrices" begin
+                mat_λ = λ .* A
+                @. mat_λ[2:end, 2:end] += (1 - λ) * B
+                vec_λ = λ .* a
+                @. vec_λ[2:end] += (1 - λ) * b
+
+                mat_λ_c = λ .* A_c
+                @. mat_λ_c[2:end, 2:end] += (1 - λ) * B_c
+                vec_λ_c = λ .* a_c
+                @. vec_λ_c[2:end] += (1 - λ) * b_c
+                xytxy_λ_c = λ * xtx_c + (1 - λ) * yty_c
+
+                mat_λ_t = λ .* A_t
+                @. mat_λ_t[2:end, 2:end] += (1 - λ) * B_t
+                vec_λ_t = λ .* a_t
+                @. vec_λ_t[2:end] += (1 - λ) * b_t
+                xytxy_λ_t = λ * xtx_t + (1 - λ) * yty_t
+            end
+
+            push!(tikh_λ, calc_μ_tikh(mat_λ_c, vec_λ_c, xytxy_λ_c, mat_λ_t, vec_λ_t, xytxy_λ_t, λ, to))
+
+            c = (mat_λ + tikh_λ[end].μ * I) \ vec_λ
+            fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end], to)[fitparλ.S] .+ ϕ_0[fitparλ.S]
+
+            @timeit to "local fit" begin
+                local_fit!(fitparλ, fitopt)
+            end
+
+            sum(fitparλ.χ2[fitparλ.S])
+        end
+    end
+end
+
+"""
+    split_OCV_cost(AtA_c, Atb_c, AtA_t, Atb_t, btb_t)
+
+TBW
+"""
+function split_OCV_cost(AtA_c, Atb_c, μ_scale, AtA_t, Atb_t, btb_t)
+
+    log10_μ -> let AtA_c = AtA_c, Atb_c = Atb_c,
+        AtA_t = AtA_t, Atb_t = Atb_t, btb_t = btb_t,
+        μ_scale = μ_scale
+
+        μ = μ_scale * 10.0^log10_μ
+
+        x_μ = (AtA_c + μ * I) \ Atb_c
+
+        return real(btb_t + (x_μ' * AtA_t - 2Atb_t') * x_μ)
+    end
+end
+
+"""
+    calc_μ_tikh(AtA_c, Atb_c, btb_c, N_c, AtA_t, Atb_t, btb_t, N_t,
+    μs_rel = logrange(1e-10, 1e3, 1000))
+
+TBW
+"""
+function calc_μ_tikh(AtA_c, Atb_c, btb_c, AtA_t, Atb_t, btb_t, λ, to,
+    μ_log10_rng=(-10, 3), μ_log10_acc=0.01)
+
+    @timeit to "calc Tikhonov factor" begin
+        μ_scale_c = max(real.(diag(AtA_c))...)
+        μ_scale_t = max(real.(diag(AtA_t))...)
+
+        ocv_ct = split_OCV_cost(AtA_c, Atb_c, μ_scale_c, AtA_t, Atb_t, btb_t)
+        ocv_tc = split_OCV_cost(AtA_t, Atb_t, μ_scale_t, AtA_c, Atb_c, btb_c)
+
+        log10_μ_ct, χ2_opt_ct, log10_μs_ct, χ2s_ct =
+            GSS(ocv_ct, μ_log10_rng, μ_log10_acc; show_all=true)
+
+        log10_μ_tc, χ2_opt_tc, log10_μs_tc, χ2s_tc =
+            GSS(ocv_tc, μ_log10_rng, μ_log10_acc; show_all=true)
+
+        log10_μ = 0.5 * (log10_μ_ct + log10_μ_tc)
+        μ = 10^log10_μ * 0.5 * (μ_scale_c + μ_scale_t)
+    end
+
+    (; μ, log10_μ, log10_μ_ct, χ2_opt_ct, log10_μs_ct, χ2s_ct,
+        log10_μ_tc, χ2_opt_tc, log10_μs_tc, χ2s_tc, λ)
+end
+
+"""
+    smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; μ_tikh = 1e-6)
+
+Return projection of `ϕ` on smooth subspace, defined by `bs`.
+The required agreement is restricted to the mask `S`.
+"""
+function smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; μ_tikh=1e-6)
+    # check that size is ok
+    @assert size(ϕ) == size(S)
+
+    # prepare Moore-Penrose pseudoinverse
+    BtB = calc_BtB(bs, S)
+    Btϕ = calc_Btx(bs, S, ϕ)
+
+    # Calculate the Moore-Penrose inverse.
+    # To address potential ill-posedness of the matrix ∇Bt∇B, we make use of Tikhonov regularization.
+    # The resulting bias, as long as not extremely large, should not affect the subsequent refinement step.
+    μ_tikh *= max(real.(diag(BtB))...)
+    c_mpi = (BtB + μ_tikh .* I) \ Btϕ
+
+    # calculate phase maps for b == 0
+    ϕ[S] = @views phase_map(bs, real(c_mpi[1]), c_mpi[2:end])[S]
+end
+
+"""
     phaser!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
 
 Take the data set and apply the PHASER algorithm.
@@ -60,7 +1007,7 @@ Take the data set and apply the PHASER algorithm.
 ## What it does
 - First, a local fit is performed.
 - If a smooth basis `bs` is supplied, the result is refined by subspace-based regularization.
-- If `fitopt.locfit == true`, a final local fit based upon PH is performed.
+- If `fitopt.local_fit == true`, a final local fit based upon PH is performed.
 ## Arguments
 - `fitpar::FitPar`: Fit parameters
 - `fitopt::FitOpt`: Fit options
@@ -145,7 +1092,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
         fitopt_ML.optim = fitopt.optim_phaser
 
         @timeit to "local fit" begin
-            local_fit(fitpar_ML, fitopt_ML)
+            local_fit!(fitpar_ML, fitopt_ML)
         end
 
         ϕ_ML = fitpar_ML.ϕ
@@ -181,7 +1128,7 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
     # ======================================================================
 
     au_hist = au_max = nothing
-    
+
     if fitopt.remove_gradient_outliers
         u_wo = deepcopy(u)
         u_c_wo = deepcopy(u_c_wo)
@@ -488,12 +1435,12 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
     # Final local fit, if desired
     # ======================================================================
 
-    if fitopt.locfit
+    if fitopt.local_fit
         @timeit to "final local fit" begin
             fitopt_loc = deepcopy(fitopt)
             set_num_phase_intervals(fitpar, fitopt_loc, 0)
 
-            local_fit(fitpar, fitopt_loc)
+            local_fit!(fitpar, fitopt_loc)
 
             ϕ_loc = fitpar.ϕ
             R2s_loc = fitpar.R2s
@@ -524,30 +1471,6 @@ function phaser_fire!(fitpar::FitPar{T}, fitopt::FitOpt, bs::BSmooth, to::TimerO
     else
         nothing
     end
-end
-
-"""
-    smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; μ_tikh = 1e-6)
-
-Return projection of `ϕ` on smooth subspace, defined by `bs`.
-The required agreement is restricted to the mask `S`.
-"""
-function smooth_projection!(ϕ::AbstractArray, S::AbstractArray, bs::BSmooth; μ_tikh=1e-6)
-    # check that size is ok
-    @assert size(ϕ) == size(S)
-
-    # prepare Moore-Penrose pseudoinverse
-    BtB = calc_BtB(bs, S)
-    Btϕ = calc_Btx(bs, S, ϕ)
-
-    # Calculate the Moore-Penrose inverse.
-    # To address potential ill-posedness of the matrix ∇Bt∇B, we make use of Tikhonov regularization.
-    # The resulting bias, as long as not extremely large, should not affect the subsequent refinement step.
-    μ_tikh *= max(real.(diag(BtB))...)
-    c_mpi = (BtB + μ_tikh .* I) \ Btϕ
-
-    # calculate phase maps for b == 0
-    ϕ[S] = @views phase_map(bs, real(c_mpi[1]), c_mpi[2:end])[S]
 end
 
 #= 
@@ -581,8 +1504,8 @@ function subsample_mask_new(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) wher
 
     # target number of locations in mask, which contain a derivative in every direction
     N_sub = ceil(Int, min(fitopt.redundancy * Nfree(bs), 0.99typemax(Int)))
-    
-    
+
+
     N_Sj = min(N_sub, sum(Sj_cand))
     (Sj_, ciSjs) = subsample_mask_new(N_Sj, Sj_cand, fitopt)
     Nc = ceil(Int, (1.0 - fitopt.test_frac) * N_Sj)
@@ -594,7 +1517,7 @@ function subsample_mask_new(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) wher
     Sj_c = [deepcopy(Sj_c_) for _ in 1:N]
     Sj_t = [deepcopy(Sj_t_) for _ in 1:N]
     Sj = [deepcopy(Sj_) for _ in 1:N]
-    
+
     S_c = deepcopy(Sj_c[1])
     S_t = deepcopy(Sj_t[1])
     for ej in ejs
@@ -603,7 +1526,7 @@ function subsample_mask_new(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) wher
     end
 
     S = S_c .| S_t
-    
+
     #=
 
     if N_sub < N_cand
@@ -632,7 +1555,7 @@ function subsample_mask_new(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) wher
 
     S_c = deepcopy(Sj_c[1])
     S_t = deepcopy(Sj_t[1])
-    
+
     S_c = falses(szS)
     S_t = falses(szS)
 
@@ -655,7 +1578,7 @@ end
 
 TBW
 """
-function subsample_mask_new(N, S_cand, fitopt, max_failed = 1000)
+function subsample_mask_new(N, S_cand, fitopt, max_failed=1000)
     # check for correct setting
     @assert fitopt.subsampling ∈ (:fibonacci, :random)
 
@@ -857,209 +1780,15 @@ function subsample_mask(N, S_cand, fitopt)
 end
 
 """
-    calc_generic_offset!(ϕ, z, S)
+    map_2π(ϕ)
 
-TBW
+Limit the argument to the interval `[-π, π)` by shifting with integer multiples of `2π`.
+
+## Remarks
+- The argument `ϕ` can be a scalar or an array. The result is of the same type.
 """
-function calc_generic_offset!(ϕ, z, S, S_orig)
-    # coefficient b
-    b = @views angle(sum(z[S] .* exp.(-im .* ϕ[S])))
-
-    # calculate the median of ϕ over S
-    ϕ_med = @views median(ϕ[S]) + b
-
-    # limit the median phase to [-π,π]
-    while ϕ_med > π
-        ϕ_med -= 2π
-        b -= 2π
-    end
-
-    while ϕ_med < -π
-        ϕ_med += 2π
-        b += 2π
-    end
-
-    # add offset to ϕ
-    @. ϕ[S_orig] += b
-
-    # return offset
-    b
-end
-
-"""
-    median_shift!(ϕ, S)
-
-TBW
-"""
-function median_shift!(ϕ, S)
-    # calculate the median of ϕ over S
-    ϕ_med = @views median(ϕ[S])
-    b = 0.0
-
-    # limit the median phase to [-π,π]
-    while ϕ_med > π
-        ϕ_med -= 2π
-        b -= 2π
-    end
-
-    while ϕ_med < -π
-        ϕ_med += 2π
-        b += 2π
-    end
-
-    # add offset to ϕ
-    @. ϕ[S] += b
-
-    # return offset
-    b
-end
-
-"""
-    calc_y(z::AbstractArray, S::AbstractArray)
-
-TBW
-"""
-function calc_y(z::AbstractArray, S::AbstractArray)
-    # check for consistency of arguments
-    (ndS = ndims(S)) != ndims(z) && throw(ArgumentError("z and S not compatible"))
-
-    # compute difference map ∇z
-    (∇z, Sj) = ∇j(z, S)
-
-    # to compute y, we multiply ∇z with conj(z)
-    y = [zeros(ComplexF64, size(z)) for _ in 1:length(∇z)]
-
-    # ciS = CartesianIndices(S)
-    for (∇z_, Sj_, y_) in zip(∇z, Sj, y)
-        @. y_[Sj_] = @views conj(z[Sj_]) * ∇z_[Sj_]
-    end
-
-    # result
-    return (y, Sj)
-end
-
-"""
-    calc_y_(z::AbstractArray, Sj::AbstractVector)
-
-TBW
-"""
-function calc_y_(z::AbstractArray, Sj::AbstractVector)
-    # compute difference map ∇z
-    ∇z = ∇j_(z, Sj)
-
-    # to compute y, we multiply ∇z with conj(z)
-    y = [zeros(ComplexF64, size(z)) for _ in 1:length(∇z)]
-
-    # ciS = CartesianIndices(S)
-    for (∇z_, Sj_, y_) in zip(∇z, Sj, y)
-        @. y_[Sj_] = @views conj(z[Sj_]) * ∇z_[Sj_]
-    end
-
-    # result
-    return y
-end
-
-"""
-    ∇j(A::AbstractArray, S::AbstractArray)
-
-Compute the local finite difference of array `A` along all dimensions of `S`.
-as defined in the article.
-
-# Arguments
-
-- `A::AbstractArray`: arbitrary array, for which the difference shall be computed. `eltype(A)` is only restricted in the sense that it must support subtraction.
-- `S::AbstractArray`: boolean mask, where values of `A` are meaningful. Can be a conventional Array or a BitArray.
-
-# Boundary conditions
-
-- The array `A` can have more dimensions than `S`, but the condition `size(A)[1:ndims(S)] == size(S)` must always be satisfied.
-
-# Return values
-
-The function returns a tuple `(∇A, Sj)`:
-
-- `∇A`: difference array
-- `Sj`: corresponding mask array
-
-with dimensions:
-
-- `size(∇A) == (size(S), ndims(S), size(A)[ndims(S)+1:end])`
-- `size(Sj) == (size(S), ndims(S))`
-
-# Example
-
-```jldoctext
-A = rand(5, 6, 7, 8)
-S = A[:,:,:,1] .> 0.1   # ndims(S) < ndims(A) is allowed
-
-# calculate differences along all directions
-(∇A, Sj) = ∇j(A, S)
-```
-"""
-function ∇j(A::AbstractArray, S::AbstractArray)
-    # check for consistency of arguments
-    ndA, ndS, szA, szS = ndims(A), ndims(S), size(A), size(S)
-    ndA < ndS && throw(ArgumentError("ndims(A) < ndims(S)"))
-    szA[1:ndS] != szS && throw(ArgumentError("A and S not compatible"))
-
-    # set index ranges and allocate space
-    ciS = CartesianIndices(S)
-    fiS, liS = first(ciS), last(ciS)
-
-    # compute Sj
-    Sj = [falses(szS...) for _ in 1:ndS]
-
-    for (j, Sj_) in zip(1:ndS, Sj)
-        ej = CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS))
-
-        for iS in fiS:liS-ej
-            S[iS] && S[iS+ej] && (Sj_[iS] = true)
-        end
-    end
-
-    # result
-    return (∇j_(A, Sj), Sj)
-end
-
-"""
-    ∇j_(A::AbstractArray, Sj::AbstractVector)
-
-Helper function of `∇j`.
-
-# Arguments
-
-- `A::AbstractArray`: defined as in `∇j`
-- `Sj::AbstractVector`: boolean mask vector (format as in `∇j`, but possibly with different content)
-
-# Return values
-
-- `∇A`: vector of difference arrays
-"""
-function ∇j_(A::AbstractArray, Sj::AbstractVector)
-    # check for consistency of arguments
-    ndA, ndS, szA, szS = ndims(A), ndims(Sj[1]), size(A), size(Sj[1])
-    ndA < ndS && throw(ArgumentError("ndims(A) < ndims(S)"))
-    szA[1:ndS] != szS && throw(ArgumentError("A and S not compatible"))
-    szE = szA[ndS+1:ndA]   # possible extra dimensions, not affected by the gradient
-
-    # set index ranges and allocate space
-    ciS, ciE = CartesianIndices(Sj[1]), CartesianIndices(szE)
-    fiS, liS = first(ciS), last(ciS)
-    ∇A = [zeros(eltype(A), szA...) for _ in 1:ndS]
-
-    # compute the local difference, where possible
-    for (j, ∇A_, Sj_) in zip(1:ndS, ∇A, Sj)
-        ej = CartesianIndex(ntuple(k -> k == j ? 1 : 0, ndS))
-
-        for iE in ciE
-            for iS in fiS:liS-ej
-                Sj_[iS] && (∇A_[iS, iE] = A[iS+ej, iE] - A[iS, iE])
-            end
-        end
-    end
-
-    # result
-    return ∇A
+function map_2π(ϕ)
+    mod.(ϕ .+ π, 2π) .- π
 end
 
 """
@@ -1107,59 +1836,10 @@ function create_χ2_λ_fun(fitparλ, fitopt, bs,
             fitparλ.ϕ[fitparλ.S] .= @views phase_map(bs, real(c[1]), c[2:end], to)[fitparλ.S] .+ ϕ_0[fitparλ.S]
 
             @timeit to "local fit" begin
-                local_fit(fitparλ, fitopt)
+                local_fit!(fitparλ, fitopt)
             end
 
             sum(fitparλ.χ2[fitparλ.S])
         end
     end
-end
-
-"""
-    split_OCV_cost(AtA_c, Atb_c, AtA_t, Atb_t, btb_t)
-
-TBW
-"""
-function split_OCV_cost(AtA_c, Atb_c, μ_scale, AtA_t, Atb_t, btb_t)
-
-    log10_μ -> let AtA_c = AtA_c, Atb_c = Atb_c,
-        AtA_t = AtA_t, Atb_t = Atb_t, btb_t = btb_t,
-        μ_scale = μ_scale
-
-        μ = μ_scale * 10.0^log10_μ
-
-        x_μ = (AtA_c + μ * I) \ Atb_c
-
-        return real(btb_t + (x_μ' * AtA_t - 2Atb_t') * x_μ)
-    end
-end
-
-"""
-    calc_μ_tikh(AtA_c, Atb_c, btb_c, N_c, AtA_t, Atb_t, btb_t, N_t,
-    μs_rel = logrange(1e-10, 1e3, 1000))
-
-TBW
-"""
-function calc_μ_tikh(AtA_c, Atb_c, btb_c, AtA_t, Atb_t, btb_t, λ, to,
-    μ_log10_rng=(-10, 3), μ_log10_acc=0.01)
-
-    @timeit to "calc Tikhonov factor" begin
-        μ_scale_c = max(real.(diag(AtA_c))...)
-        μ_scale_t = max(real.(diag(AtA_t))...)
-
-        ocv_ct = split_OCV_cost(AtA_c, Atb_c, μ_scale_c, AtA_t, Atb_t, btb_t)
-        ocv_tc = split_OCV_cost(AtA_t, Atb_t, μ_scale_t, AtA_c, Atb_c, btb_c)
-
-        log10_μ_ct, χ2_opt_ct, log10_μs_ct, χ2s_ct =
-            GSS(ocv_ct, μ_log10_rng, μ_log10_acc; show_all=true)
-
-        log10_μ_tc, χ2_opt_tc, log10_μs_tc, χ2s_tc =
-            GSS(ocv_tc, μ_log10_rng, μ_log10_acc; show_all=true)
-
-        log10_μ = 0.5 * (log10_μ_ct + log10_μ_tc)
-        μ = 10^log10_μ * 0.5 * (μ_scale_c + μ_scale_t)
-    end
-
-    (; μ, log10_μ, log10_μ_ct, χ2_opt_ct, log10_μs_ct, χ2s_ct,
-        log10_μ_tc, χ2_opt_tc, log10_μs_tc, χ2s_tc, λ)
 end

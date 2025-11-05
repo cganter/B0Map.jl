@@ -1,9 +1,9 @@
 using ChunkSplitters, Optim, TimerOutputs, Compat
 import VP4Optim as VP
-@compat public local_fit, GSS
+@compat public local_fit!, GSS
 
 """
-    local_fit(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
+    local_fit!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
 
 Fit data to multi-echo GRE model locally.
 
@@ -17,9 +17,9 @@ Fit data to multi-echo GRE model locally.
 - Optionally (`fitopt.optim == true`), for the best GSS estimate `[ϕ, R2s]` is refined with a nonlinear fit.
 - The final estimates `[ϕ, R2s]` are stored in `fitpar`, together with the linear coefficients `VP4Optim.c` and the goodness of fit `VP4Optim.χ2`.
 """
-function local_fit(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
+function local_fit!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
     if fitopt.accel == :mt
-        local_fit_mt(fitpar, fitopt)
+        local_fit_mt!(fitpar, fitopt)
     elseif fitopt.accel == :cuda
         error("CUDA support not implemented yet.")
     else
@@ -28,11 +28,11 @@ function local_fit(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMulti
 end
 
 """
-    local_fit_mt(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
+    local_fit_mt!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
 
 Multi-threaded implementation of [`local_fit`](@ref local_fit)
 """
-function local_fit_mt(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
+function local_fit_mt!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
     # Cartesian indices of valid data (defined by the mask S)
     cis = CartesianIndices(fitpar.S)[fitpar.S]
     cis_chunks = [view(cis, index_chunks(cis, n=fitopt.n_chunks)[i]) for i in 1:fitopt.n_chunks]

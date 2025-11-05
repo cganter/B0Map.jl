@@ -8,7 +8,8 @@ BLAS.set_num_threads(1)
 
 # ISMRM challenge 2012 data sets:
 #data_set, slice = 5, 5
-data_set, slice = 12, 3
+data_set, slice = 12, 2
+oi = orient_ISMRM(data_set)
 
 # 1: tibia, tra
 # 2: upper body, cor
@@ -32,8 +33,8 @@ data_set, slice = 12, 3
 fitopt = BM.fitOpt()
 fitopt.K = [5, 5]
 fitopt.redundancy = Inf
-fitopt.diagnostics = true
 fitopt.os_fac = [1.3]
+fitopt.balance_data = 3
 
 # apply PHASER
 cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
@@ -49,8 +50,11 @@ cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
 # show it
 display(fig)
 
-(fig_wf, _) = phaser_workflow!(cal.PH.PH, oi=orient_ISMRM(data_set))
-display(fig_wf)
+#(fig_wf, _) = phaser_workflow!(cal.PH.PH, oi=orient_ISMRM(data_set))
+#display(fig_wf)
+
+(fig_ph_histo, _) = phaser_phase_histograms(cal.bm.PH, height_per_plot = 200, oi = oi)
+display(fig_ph_histo)
 
 ## save results
 

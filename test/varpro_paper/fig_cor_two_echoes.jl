@@ -71,8 +71,8 @@ fitopt_FC = deepcopy(fitopt)
 fitopt_RW = deepcopy(fitopt)
 
 # local fit
-res_FC = BM.local_fit(fitpar_FC, fitopt_FC)
-res_RW = BM.local_fit(fitpar_RW, fitopt_RW)
+res_FC = BM.local_fit!(fitpar_FC, fitopt_FC)
+res_RW = BM.local_fit!(fitpar_RW, fitopt_RW)
 
 # extract maps
 ϕ_RW = fitpar_RW.ϕ

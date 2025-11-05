@@ -56,7 +56,7 @@ fitopt.R2s_rng = [0.0, 0.0]
 fitopt.redundancy = 100
 fitopt.subsampling = :fibonacci
 fitopt.balance = true
-fitopt.locfit = false # we only want to reconstruct a single slice
+fitopt.local_fit = false # we only want to reconstruct a single slice
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
 fitopt.diagnostics = true
@@ -75,7 +75,7 @@ cor_sl = 64
 
 # full 2d local fit
 fitpar_loc = BM.fitPar(grePar, deepcopy(data[:,:,cor_sl,:]), deepcopy(S[:,:,cor_sl]))
-BM.local_fit(fitpar_loc, fitopt)
+BM.local_fit!(fitpar_loc, fitopt)
 ϕ_loc = fitpar_loc.ϕ
 f_loc = BM.fat_fraction_map(fitpar_loc, fitopt)
 freq_loc = BM.freq_map(fitpar_loc)
@@ -85,7 +85,7 @@ fitpar_loc_phs = BM.fitPar(grePar, deepcopy(data[:,:,cor_sl,:]), deepcopy(S[:,:,
 fitpar_loc_phs.ϕ[:,:] .= @views fitpar.ϕ[:,:,cor_sl]
 BM.set_num_phase_intervals(fitpar_loc_phs, fitopt, 0)
 fitopt.optim = true
-BM.local_fit(fitpar_loc_phs, fitopt)
+BM.local_fit!(fitpar_loc_phs, fitopt)
 f_loc_phs = BM.fat_fraction_map(fitpar_loc_phs, fitopt)
 freq_loc_phs = BM.freq_map(fitpar_loc_phs)
 

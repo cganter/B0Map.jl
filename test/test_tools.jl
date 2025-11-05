@@ -59,7 +59,7 @@ mutable struct SimPhaPar
     balance::Bool
     remove_gradient_outliers::Bool
     remove_local_outliers::Bool
-    locfit::Bool
+    local_fit::Bool
     optim::Bool
     optim_phaser::Bool
     μ_tikh::Float64
@@ -125,7 +125,7 @@ function SimPhaPar()
     balance = true
     remove_gradient_outliers = true
     remove_local_outliers = true
-    locfit = true
+    local_fit = true
     optim = true
     optim_phaser = true
     μ_tikh = 100eps()
@@ -143,7 +143,7 @@ function SimPhaPar()
         S_holes, S_io,
         ϕ_proj, ϕ_med,
         redundancy, subsampling, balance, remove_gradient_outliers, remove_local_outliers, 
-        locfit, optim, optim_phaser, μ_tikh, n_chunks, rng
+        local_fit, optim, optim_phaser, μ_tikh, n_chunks, rng
     )
 end
 
@@ -381,7 +381,7 @@ function simulate_phantom(spp::SimPhaPar)
     fitopt.balance = spp.balance
     fitopt.remove_gradient_outliers = spp.remove_gradient_outliers
     fitopt.remove_local_outliers = spp.remove_local_outliers
-    fitopt.locfit = spp.locfit
+    fitopt.local_fit = spp.local_fit
     fitopt.optim = spp.optim
     fitopt.optim_phaser = spp.optim_phaser
     fitopt.os_fac = spp.os_fac
@@ -393,6 +393,8 @@ function simulate_phantom(spp::SimPhaPar)
     bs = BM.fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
 
     # apply PHASER
+    fp, fo = deepcopy(fitpar), deepcopy(fitopt)
+    bm = BM.B0map!(fp, fo, bs)    
     rp = BM.phaser!(fitpar, fitopt, bs)
 
     # ------------ preparing results ------------
@@ -422,5 +424,5 @@ function simulate_phantom(spp::SimPhaPar)
 
     # ------------ return everything ------------
 
-    (; phantom, fitpar, fitopt, bs, PH, to)
+    (; phantom, fitpar, fitopt, bs, PH, to, bm)
 end

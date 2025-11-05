@@ -70,12 +70,15 @@ Data structure holding the fit parameters.
 - `R2s_rng::Array`: Search range for `R2s`.
 - `ϕ_acc::Float64`: Required GSS accuracy for `ϕ_acc`
 - `R2s_acc::Float64`: Required GSS accuracy for `R2s_acc`
-- `locfit::Bool`: Perform a final local fit, based upon PHASER.
+- `local_fit::Bool`: Perform a final local fit, based upon PHASER.
 ## Local Fit only
 - `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
 - `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
+- `λ::Float`: Relative weight of gradient-based estimate
+- `balance_cost`: Max. number of cost-based balancing
+- `balance_data`: Max. number of data-based balancing
 - `μ_tikh::Float`: (Small) Tikhonov regularization parameter
 - `K::Vector{Int}`: Fourier Kernel size
 - `os_fac::Vector{Float64}`: oversampling factor
@@ -85,6 +88,7 @@ Data structure holding the fit parameters.
 - `remove_local_outliers::Bool`: Try to eliminate local outliers
 - `balance::Bool`: Balance local and gradient fit
 - `optim_balance::Bool`: Optimization during balancing of local and gradient fit
+- `max_iter_PHASER::Int`: max. number of balanced iterations
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
 - `verbose::Bool`: Print information about what is actually done.
@@ -100,10 +104,13 @@ mutable struct FitOpt
     R2s_rng::Vector{Float64}
     ϕ_acc::Float64
     R2s_acc::Float64
-    locfit::Bool
+    local_fit::Bool
     optim::Bool
     optim_phaser::Bool
     autodiff::Symbol
+    λ::Float64
+    balance_cost::Int
+    balance_data::Int
     μ_tikh::Float64
     K::Vector{Int}
     os_fac::Vector{Float64}
@@ -133,10 +140,13 @@ Default constructor for [FitOpt](@ref FitOpt)
 - `R2s_rng == [0.0, 1.0]`
 - `ϕ_acc == 1.e-4`
 - `R2s_acc == 1.e-4`
-- `locfit == true`
+- `local_fit == true`
 - `optim == true`
 - `optim_phaser == true`
 - `autodiff == :finite`
+- `λ == 0.0`
+- `balance_cost == 10`
+- `balance_data == 2`
 - `μ_tikh == 1.e-6`
 - `n_chunks == 8Threads.nthreads()`
 - `verbose == false`
@@ -150,11 +160,14 @@ function fitOpt(ϕ_scale = 1.0)
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
-    locfit = true
+    local_fit = true
     optim = true
     optim_phaser = true
     autodiff = :finite
-    μ_tikh = 1.e-6
+    λ = 0.0
+    balance_cost = 0
+    balance_data = 3
+    μ_tikh = 1.e-10
     K = []
     os_fac = [1.5]
     redundancy = Inf
@@ -169,7 +182,8 @@ function fitOpt(ϕ_scale = 1.0)
     verbose = false
     diagnostics = false
     accel = :mt
-    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, locfit, optim, optim_phaser, autodiff, μ_tikh, K, 
+    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, local_fit, optim, optim_phaser, autodiff, λ, 
+            balance_cost, balance_data, μ_tikh, K, 
             os_fac, redundancy, subsampling, remove_gradient_outliers, remove_local_outliers,
             test_frac, balance, optim_balance,
             n_chunks, rng, verbose, diagnostics, accel)

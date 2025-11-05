@@ -373,7 +373,7 @@ function MC_sim_LocFit(;
         fitopt.optim = false
 
         # do local fit (automatically supports multi-threading)
-        BM.local_fit(fitpar[m], fitopt)
+        BM.local_fit!(fitpar[m], fitopt)
 
         # extract maps
         ϕ_min[m] = fitpar[m].ϕ
@@ -519,7 +519,7 @@ function MC_sim_LocFit_Δppm(;
         fitopt.optim = false
 
         # do local fit (automatically supports multi-threading)
-        BM.local_fit(fitpar[m], fitopt)
+        BM.local_fit!(fitpar[m], fitopt)
 
         # extract maps
         χ2_min[m] = fitpar[m].χ2
@@ -596,7 +596,7 @@ function ismrm_challenge(
     BM.set_num_phase_intervals(fitpar, fitopt, fitopt.n_ϕ)
 
     # do the work
-    BM.local_fit(fitpar, fitopt)
+    BM.local_fit!(fitpar, fitopt)
 
     # return results
     return (; fitpar)

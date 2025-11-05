@@ -14,7 +14,7 @@ spp.freq_rng = [-2, 2]
 spp.Nρ = [256, 256]
 spp.K = [2, 2]
 #spp.rng = MersenneTwister()
-spp.locfit = false
+spp.local_fit = false
 spp.S_holes = 0.5
 spp.S_io = :out
 spp.cov_mat = 0.05^2 * [1;;]
@@ -27,7 +27,7 @@ spp.os_fac = [1.3]
 spp.ppm_fat_pha = spp.ppm_fat .- 0.1
 
 spp.rng = MersenneTwister(42)
-spp.redundancy = 100
+spp.redundancy = Inf
 sim = simulate_phantom(spp);
 
 ##
@@ -337,7 +337,7 @@ fitpar_ML.R2s[:, :] = R2s_ML
 locfit_0.ϕ[:, :] = ϕ0_PH
 
 BM.set_num_phase_intervals(locfit_0, fo_0, 0)
-BM.local_fit(locfit_0, fo_0)
+BM.local_fit!(locfit_0, fo_0)
 
 fitpar_ML.S[noS_PH] .= false
 pdff_ML = BM.fat_fraction_map(fitpar_ML, fo_ML)
