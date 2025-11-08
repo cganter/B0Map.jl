@@ -39,6 +39,27 @@ fitopt.balance_data = 3
 # apply PHASER
 cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
 
+ϕ_loc = pdff = nothing
+
+##
+
+(fig, _, ϕ_loc, pdff) = phaser_phase_histograms(cal.bm.PH, cal.fitpar, fitopt;
+    oi=oi,
+    width_per_plot=230,
+    height_per_plot=260,
+    j=1,
+    columns=(:Φ_hist, :ϕ, :ϕ_loc, :pdff),
+    ϕ_loc=ϕ_loc, 
+    pdff=pdff,
+    ϕ_rng_2π=false,
+    ϕns=nothing,
+    letters=true,
+    )
+
+display(fig)
+
+##
+
 # generate image
 (fig, dax) = gen_fig_ISMRM(cal;
     width = 800,

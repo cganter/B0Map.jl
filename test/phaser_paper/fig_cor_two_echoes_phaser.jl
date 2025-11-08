@@ -60,29 +60,58 @@ fitopt.local_fit = false # we only want to reconstruct a single slice
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
 fitopt.diagnostics = true
+fitopt.μ_tikh = 1e-6
 fitopt.remove_gradient_outliers = true
 fitopt.remove_local_outliers = true
+fitopt.balance_data = 6
 
 # set up Fourier Kernel
 Nρ = size(data)[1:3]
 bs = BM.fourier_lin(Nρ[1:length(fitopt.K)], fitopt.K; os_fac=fitopt.os_fac)
 
 # apply PHASER
-res = BM.phaser!(fitpar, fitopt, bs)
+#res = BM.phaser!(fitpar, fitopt, bs)
+#fp = deepcopy(fitpar)
+#fo = deepcopy(fitopt)
+
+#
+
+cal = BM.B0map!(fitpar, fitopt, bs)
+
+ϕ_loc = pdff = nothing
 
 # we select a slice to show
 cor_sl = 64
 
+##
+
+(fig, _, ϕ_loc, pdff) = phaser_phase_histograms(cal.PH, fitpar, fitopt;
+    oi=x -> rotl90(x[:, end:-1:1]),
+    width_per_plot=230,
+    height_per_plot=260,
+    slice=64,
+    j=1,
+    columns=(:Φ_hist, :ϕ, :ϕ_loc, :pdff),
+    ϕ_loc=ϕ_loc, 
+    pdff=pdff,
+    ϕns=(1,7),
+    letters=true,
+    )
+
+display(fig)
+
+##
+#
 # full 2d local fit
-fitpar_loc = BM.fitPar(grePar, deepcopy(data[:,:,cor_sl,:]), deepcopy(S[:,:,cor_sl]))
+fitpar_loc = BM.fitPar(grePar, deepcopy(data[:, :, cor_sl, :]), deepcopy(S[:, :, cor_sl]))
 BM.local_fit!(fitpar_loc, fitopt)
 ϕ_loc = fitpar_loc.ϕ
 f_loc = BM.fat_fraction_map(fitpar_loc, fitopt)
 freq_loc = BM.freq_map(fitpar_loc)
 
-fitpar_loc_phs = BM.fitPar(grePar, deepcopy(data[:,:,cor_sl,:]), deepcopy(S[:,:,cor_sl]))
+fitpar_loc_phs = BM.fitPar(grePar, deepcopy(data[:, :, cor_sl, :]), deepcopy(S[:, :, cor_sl]))
 # set PHASER as starting value
-fitpar_loc_phs.ϕ[:,:] .= @views fitpar.ϕ[:,:,cor_sl]
+fitpar_loc_phs.ϕ[:, :] .= @views fitpar.ϕ[:, :, cor_sl]
 BM.set_num_phase_intervals(fitpar_loc_phs, fitopt, 0)
 fitopt.optim = true
 BM.local_fit!(fitpar_loc_phs, fitopt)
@@ -102,23 +131,23 @@ colmapO = :romaO
 colmap = :roma
 colmap_f = :imola
 
-S_sl = deepcopy(S[:,:,cor_sl])
+S_sl = deepcopy(S[:, :, cor_sl])
 noS_sl = (!).(S_sl)
-S_phs_sl = deepcopy(res.PH.S[:,:,cor_sl])
+S_phs_sl = deepcopy(res.PH.S[:, :, cor_sl])
 noS_phs_sl = (!).(S_phs_sl)
 c_loc_phs = zeros(ComplexF64, size(S_sl))
 BM.calc_par(fitpar_loc_phs, fitopt, x -> BM.coil_sensitivities(x)[1], c_loc_phs)
 
 #
 
-ϕ_ML_sl = deepcopy(res.PH.ϕ_ML[:,:,cor_sl])
+ϕ_ML_sl = deepcopy(res.PH.ϕ_ML[:, :, cor_sl])
 ϕ_ML_sl[noS_phs_sl] .= NaN
 ϕ_loc[noS_sl] .= NaN
-ϕ_phs_sl = @views fitpar.ϕ[:,:,cor_sl]
+ϕ_phs_sl = @views fitpar.ϕ[:, :, cor_sl]
 ϕ_phs_sl[noS_sl] .= NaN
-ϕ0_phs_sl = @views res.PH.ϕ0[:,:,cor_sl]
+ϕ0_phs_sl = @views res.PH.ϕ0[:, :, cor_sl]
 ϕ0_phs_sl[noS_sl] .= NaN
-ϕ1_phs_sl = @views res.PH.ϕ1[:,:,cor_sl]
+ϕ1_phs_sl = @views res.PH.ϕ1[:, :, cor_sl]
 ϕ1_phs_sl[noS_sl] .= NaN
 ϕ_phs_loc_sl = fitpar_loc_phs.ϕ
 ϕ_phs_loc_sl[noS_sl] .= NaN
@@ -130,7 +159,7 @@ cw_loc_phs = abs.(c_loc_phs) .* (1 .- f_loc_phs)
 cf_loc_phs = abs.(c_loc_phs) .* f_loc_phs
 c_angle_loc_phs = angle.(c_loc_phs)
 
-fig = Figure(size = (width, height))
+fig = Figure(size=(width, height))
 
 # -------------------------------------------------
 
@@ -139,9 +168,9 @@ ax = Axis(fig[1, 1],
 )
 
 heatmap!(ax,
-    rotl90(f_loc[:,end:-1:1]),
+    rotl90(f_loc[:, end:-1:1]),
     colormap=colmap_f,
-    colorrange=(0,1),
+    colorrange=(0, 1),
     nan_color=:black,
 )
 
@@ -158,7 +187,7 @@ ax = Axis(fig[1, 2],
 )
 
 heatmap!(ax,
-    rotl90(ϕ_loc[:,end:-1:1]),
+    rotl90(ϕ_loc[:, end:-1:1]),
     colormap=colmapO,
     nan_color=:black,
 )
@@ -176,7 +205,7 @@ ax = Axis(fig[1, 3],
 )
 
 heatmap!(ax,
-    rotl90(ϕ_ML_sl[:,end:-1:1]),
+    rotl90(ϕ_ML_sl[:, end:-1:1]),
     colormap=colmapO,
     nan_color=:black,
 )
@@ -203,9 +232,9 @@ ax = Axis(fig[2, 1],
 )
 
 heatmap!(ax,
-    rotl90(f_loc_phs[:,end:-1:1]),
+    rotl90(f_loc_phs[:, end:-1:1]),
     colormap=colmap_f,
-    colorrange=(0,1),
+    colorrange=(0, 1),
     nan_color=:black,
 )
 
@@ -222,7 +251,7 @@ ax = Axis(fig[2, 3],
 )
 
 heatmap!(ax,
-    rotl90(ϕ_phs_sl[:,end:-1:1]),
+    rotl90(ϕ_phs_sl[:, end:-1:1]),
     colormap=colmapO,
     nan_color=:black,
     colorrange=lim_ϕ,
@@ -241,7 +270,7 @@ ax = Axis(fig[2, 2],
 )
 
 heatmap!(ax,
-    rotl90(ϕ_phs_loc_sl[:,end:-1:1]),
+    rotl90(ϕ_phs_loc_sl[:, end:-1:1]),
     colormap=colmapO,
     nan_color=:black,
     colorrange=lim_ϕ,
@@ -334,7 +363,7 @@ display(fig)
 
 ## show workflow
 
-(fig_wf, _) = phaser_workflow!(res.PH, slice = cor_sl, oi= x -> rotl90(x[:,end:-1:1]))
+(fig_wf, _) = phaser_workflow!(res.PH, slice=cor_sl, oi=x -> rotl90(x[:, end:-1:1]))
 display(fig_wf)
 
 ##
