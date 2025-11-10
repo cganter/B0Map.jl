@@ -52,50 +52,45 @@ fitpar = BM.fitPar(grePar, deepcopy(data), deepcopy(S))
 # ... and of FitOpt
 fitopt = BM.fitOpt()
 fitopt.K = [3, 3, 3]
-fitopt.R2s_rng = [0.0, 0.0]
+fitopt.R2s_rng = [0.0, 0.0]   # R2* ≡ 0 for two-echo GRE
 fitopt.redundancy = 100
 fitopt.subsampling = :fibonacci
 fitopt.balance = true
 fitopt.local_fit = false # we only want to reconstruct a single slice
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
-fitopt.diagnostics = true
 fitopt.μ_tikh = 1e-6
-fitopt.remove_gradient_outliers = true
-fitopt.remove_local_outliers = true
 fitopt.balance_data = 6
 
 # set up Fourier Kernel
 Nρ = size(data)[1:3]
 bs = BM.fourier_lin(Nρ[1:length(fitopt.K)], fitopt.K; os_fac=fitopt.os_fac)
 
-# apply PHASER
-#res = BM.phaser!(fitpar, fitopt, bs)
-#fp = deepcopy(fitpar)
-#fo = deepcopy(fitopt)
+cal = BM.B0map!(fitpar, fitopt, bs);
 
-#
-
-cal = BM.B0map!(fitpar, fitopt, bs)
+## to reset diagnostics
 
 ϕ_loc = pdff = nothing
 
-# we select a slice to show
-cor_sl = 64
-
 ##
 
-(fig, _, ϕ_loc, pdff) = phaser_phase_histograms(cal.PH, fitpar, fitopt;
-    oi=x -> rotl90(x[:, end:-1:1]),
-    width_per_plot=230,
-    height_per_plot=260,
-    slice=64,
+(fig, _, ϕ_loc, pdff) = phaser_diagnostics(cal.PH, fitpar, fitopt;
+    width_per_plot=200,
+    height_per_plot=230,
+    nbins=50,
+    bin_mode=:fixed,
     j=1,
+    col_in=:blue, col_out=:red, alpha_out=0.3,
+    cm_pdff=:imola, cm=:roma, cmO=:romaO,
+    font_pt=12,
+    slice=64,
+    oi=x -> rotl90(x[:, end:-1:1]),
     columns=(:Φ_hist, :ϕ, :ϕ_loc, :pdff),
+    ϕns=(1,7),
+    ϕ_rng_2π=true,
+    letters=true,
     ϕ_loc=ϕ_loc, 
     pdff=pdff,
-    ϕns=(1,7),
-    letters=true,
     )
 
 display(fig)

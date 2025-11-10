@@ -7,7 +7,7 @@ include("ph_util.jl")
 BLAS.set_num_threads(1)
 
 # ISMRM challenge 2012 data sets:
-#data_set, slice = 5, 5
+#data_set, slice = 5, 3
 data_set, slice = 12, 2
 oi = orient_ISMRM(data_set)
 
@@ -34,7 +34,7 @@ fitopt = BM.fitOpt()
 fitopt.K = [5, 5]
 fitopt.redundancy = Inf
 fitopt.os_fac = [1.3]
-fitopt.balance_data = 3
+fitopt.balance_data = 2
 
 # apply PHASER
 cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
@@ -43,17 +43,24 @@ cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
 
 ##
 
-(fig, _, ϕ_loc, pdff) = phaser_phase_histograms(cal.bm.PH, cal.fitpar, fitopt;
-    oi=oi,
+(fig, ϕ_loc, pdff) = phaser_diagnostics(cal.bm.PH, cal.fitpar, fitopt;
     width_per_plot=230,
-    height_per_plot=260,
-    j=1,
-    columns=(:Φ_hist, :ϕ, :ϕ_loc, :pdff),
+    height_per_plot=230,
+    nbins=50,
+    bin_mode=:rice,
+    j=2,
+    col_in=:blue, col_out=:red, alpha_out=0.3,
+    cm_pdff=:imola, cm=:roma, cmO=:romaO,
+    font_pt=12, label_pt=10,
+    slice=1,
+    oi=oi,
+    columns=(:Φ_hist, :Φ, :ϕ, :pdff),
+    colbars=(:ϕ_loc,:pdff, :ϕ, :Φ),
+    ϕns=(1,3),
+    ϕ_rng_2π=false,
+    letters=true,
     ϕ_loc=ϕ_loc, 
     pdff=pdff,
-    ϕ_rng_2π=false,
-    ϕns=nothing,
-    letters=true,
     )
 
 display(fig)

@@ -377,9 +377,14 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
             # for the minimum of the histogram for `u > median(abs(u))`
             # if there is outlier, this should autmatically include the relevant part of the 
             # histogram (which a purely local derivative cannot provide with similar stability)
-            fimi = @views findmin(a∇Φ_hist[end].weights[iemin+1:end])[2]
+            fimi = iemin
+            fimi_test = fimi + 1
+            while fimi_test <= nbins && a∇Φ_hist[end].weights[fimi_test] < a∇Φ_hist[end].weights[fimi]
+                fimi = fimi_test
+                fimi_test += 1
+            end
             # define cutoff value
-            push!(a∇Φ_max, edges[fimi+iemin])
+            push!(a∇Φ_max, 0.5(edges[fimi+iemin] + edges[fimi+iemin+1]))
         end
 
         haskey(ig, :a∇Φ_hist) || (ig[:a∇Φ_hist] = typeof(a∇Φ_hist)[])
@@ -429,8 +434,8 @@ function remove_local_outliers!(T, S, Φ, info, to)
             ip_min = ip_min_test
             ip_min_test -= 1
         end
-        Φ_min = 0.5(Φ_hist.edges[1][ip_min] + Φ_hist.edges[1][ip_min+1])
-        Φ_max = 0.5(Φ_hist.edges[1][ip_max] + Φ_hist.edges[1][ip_max-1])
+        Φ_min = 0.5(edges[ip_min] + edges[ip_min+1])
+        Φ_max = 0.5(edges[ip_max] + edges[ip_max-1])
 
         push!(T, deepcopy(S))
 
@@ -570,7 +575,7 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fit
 
         # make sure that the phase median over S lies within (-π, π]
         median_shift!(ϕ[end], R)
-        
+
         # improve masks
         push!(Φ, map_2π(Φ_ML - ϕ[end]))
         push!(∇Φ, map(map_2π, ∇j_(Φ[end], Sj)))

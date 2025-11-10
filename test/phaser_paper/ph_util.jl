@@ -481,23 +481,32 @@ function show_hist_Δϕ1!(ax, PH, name; nbins=100, col_in=:blue, col_out=:red, a
     hist!(ax, PH.Δϕ1_wo[PH.S_wo], bins=bins, color=clrs)
 end
 
-function phaser_phase_histograms(PH, fitpar, fitopt;
+function phaser_diagnostics(PH, fitpar, fitopt;
     width_per_plot=200,
     height_per_plot=200,
     nbins=100,
+    bin_mode=:fixed,  # bin_mode ∈ {:fixed, :rice}
     j=1,
     col_in=:blue, col_out=:red, alpha_out=0.3,
     cm_pdff=:imola, cm=:roma, cmO=:romaO,
-    font_pt=12,
+    font_pt=12, label_pt=8,
     slice=1,
     oi=x -> x,
-    columns=(:Φ_hist, :T, :∇Φ_hist, :Tj),#(:Φ_hist, :T, :Φ, :∇Φ_hist, :Tj, :∇Φ),
+    columns=(),
+    colbars=(),
     ϕ_rng_2π=false,
     ϕns=nothing,
     letters=false,
     ϕ_loc=nothing,
     pdff=nothing,
 )
+    supported_columns = (:Φ, :Φ_hist, :∇Φ, :∇Φ_hist, :abs_∇Φ_hist, :ϕ, :ϕ_loc, :T, :Tj, :pdff)
+    supported_colbars = (:Φ, :∇Φ, :ϕ, :ϕ_loc, :pdff)
+
+    @assert all(col -> col ∈ supported_columns, columns)
+    @assert all(cb -> cb ∈ supported_colbars, colbars)
+    @assert bin_mode ∈ (:fixed, :rice)
+
     Φ_ML = @views PH.Φ_ML[:, :, slice]
     ∇Φ_ML = @views PH.∇Φ_ML[j][:, :, slice]
     Φ = @views [Φ_[:, :, slice] for Φ_ in PH.Φ]
@@ -507,6 +516,8 @@ function phaser_phase_histograms(PH, fitpar, fitopt;
     R = @views fitpar.S[:, :, slice]
     noR = (!).(R)
     Sj = @views PH.Sj[j][:, :, slice]
+    noSj = (!).(Sj)
+    map(x -> x[noSj] .= NaN, ∇Φ)
     T = @views [T_[:, :, slice] for T_ in PH.T]
     Tj = @views [Tj_[j][:, :, slice] for Tj_ in PH.Tj]
     data = ndims(fitpar.data) == 3 ? fitpar.data : @views fitpar.data[:, :, slice, :]
@@ -563,161 +574,364 @@ function phaser_phase_histograms(PH, fitpar, fitopt;
     pt = 4 / 3
     fig = Figure(size=(width, height), fontsize=font_pt * pt)
 
-    axs = [Axis(fig[i, j]) for i in 1:nrows, j in 1:ncols]
+    i_col = 1
+    v_col = Int[]
 
-    for (i_col, col) in enumerate(columns)
+    for col in columns
+        push!(v_col, i_col)
+        axs = [Axis(fig[i, i_col]) for i in 1:nrows]
+
+        # --------------------------------------------------------------------
 
         if col == :Φ_hist
-            axs[1, i_col].title = L"$\Phi_{ML}$"
-            hideydecorations!(axs[1, i_col])
+            axs[1].title = L"$\Phi_{ML}$"
+            hideydecorations!(axs[1])
 
-
-            mi, ma = min(Φ_ML[S]...), max(Φ_ML[S]...)
-            bins = range(mi, ma, nbins + 1)
-            hist!(axs[1, i_col], Φ_ML[S], bins=bins, scale_to=1, color=(col_out, alpha_out))
-            axs[1, i_col].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
-            axs[1, i_col].xticklabelsize = 9pt
+            bins = range(-π, π, bin_mode == :fixed ? nbins + 1 : ceil(Int, (2sum(S))^(1 / 3) + 1))
+            hist!(axs[1], Φ_ML[S], bins=bins, scale_to=1, color=(col_out, alpha_out))
+            axs[1].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
+            axs[1].xticklabelsize = label_pt
 
             for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = L"$\Phi^{(%$n)}$"
-                hideydecorations!(axs[i+1, i_col])
+                axs[i+1].title = L"$\Phi^{(%$n)}$"
+                hideydecorations!(axs[i+1])
 
-                mi, ma = min(Φ[n][S]...), max(Φ[n][S]...)
-                bins = range(mi, ma, nbins + 1)
-                hist!(axs[i+1, i_col], Φ[n][S], bins=bins, scale_to=1, color=(col_out, alpha_out))
-                hist!(axs[i+1, i_col], Φ[n][T[n+1]], bins=bins, scale_to=1, color=col_in)
-                axs[i+1, i_col].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
-                axs[i+1, i_col].xticklabelsize = 9pt
+                hist!(axs[i+1], Φ[n][S], bins=bins, scale_to=1, color=(col_out, alpha_out))
+                hist!(axs[i+1], Φ[n][T[n+1]], bins=bins, scale_to=1, color=col_in)
+                axs[i+1].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
+                axs[i+1].xticklabelsize = label_pt
             end
+
+            i_col += 1
         end
+
+        # --------------------------------------------------------------------
 
         if col == :∇Φ_hist
-            axs[1, i_col].title = L"$\nabla_%$j\Phi_{ML}$"
-            hideydecorations!(axs[1, i_col])
+            axs[1].title = L"$\nabla_%$j\,\Phi_{ML}$"
+            hideydecorations!(axs[1])
 
-            mi, ma = min(∇Φ_ML[Sj]...), max(∇Φ_ML[Sj]...)
-            bins = range(mi, ma, nbins + 1)
-            hist!(axs[1, i_col], ∇Φ_ML[Sj], bins=bins, scale_to=1, color=(col_out, alpha_out))
-            hist!(axs[1, i_col], ∇Φ_ML[Tj[1]], bins=bins, scale_to=1, color=col_in)
+            bins = range(-π, π, bin_mode == :fixed ? nbins + 1 : ceil(Int, (2sum(Sj))^(1 / 3)) + 1)
+            hist!(axs[1], ∇Φ_ML[Sj], bins=bins, scale_to=1, color=(col_out, alpha_out))
+            hist!(axs[1], ∇Φ_ML[Tj[1]], bins=bins, scale_to=1, color=col_in)
 
             for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = L"$\nabla_%$j\Phi^{(%$n)}$"
-                hideydecorations!(axs[i+1, i_col])
+                axs[i+1].title = L"$\nabla_%$j\,\Phi^{(%$n)}$"
+                hideydecorations!(axs[i+1])
 
-                mi, ma = min(∇Φ[n][Sj]...), max(∇Φ[n][Sj]...)
-                bins = range(mi, ma, nbins + 1)
-                hist!(axs[i+1, i_col], ∇Φ[n][Sj], bins=bins, scale_to=1, color=(col_out, alpha_out))
-                hist!(axs[i+1, i_col], ∇Φ[n][Tj[n+1]], bins=bins, scale_to=1, color=col_in)
-                axs[i+1, i_col].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
-                axs[i+1, i_col].xticklabelsize = 9pt
+                hist!(axs[i+1], ∇Φ[n][Sj], bins=bins, scale_to=1, color=(col_out, alpha_out))
+                hist!(axs[i+1], ∇Φ[n][Tj[n+1]], bins=bins, scale_to=1, color=col_in)
+                axs[i+1].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
+                axs[i+1].xticklabelsize = label_pt
             end
+
+            i_col += 1
         end
+
+        # --------------------------------------------------------------------
+
+        if col == :abs_∇Φ_hist
+            axs[1].title = L"$\left|\,\nabla_%$j\,\Phi_{ML}\,\right|$"
+            hideydecorations!(axs[1])
+
+            bins = range(0, π, bin_mode == :fixed ? nbins + 1 : ceil(Int, (2sum(Sj))^(1 / 3)) + 1)
+            @views hist!(axs[1], abs.(∇Φ_ML[Sj]), bins=bins, scale_to=1, color=(col_out, alpha_out))
+            @views hist!(axs[1], abs.(∇Φ_ML[Tj[1]]), bins=bins, scale_to=1, color=col_in)
+            axs[1].xticks = ([0, π], ["0", "π"])
+            axs[1].xticklabelsize = label_pt
+
+            for (i, n) in enumerate(ϕns)
+                axs[i+1].title = L"$\left|\,\nabla_%$j\,\Phi^{(%$n)}\,\right|$"
+                hideydecorations!(axs[i+1])
+
+                @views hist!(axs[i+1], abs.(∇Φ[n][Sj]), bins=bins, scale_to=1, color=(col_out, alpha_out))
+                @views hist!(axs[i+1], abs.(∇Φ[n][Tj[n+1]]), bins=bins, scale_to=1, color=col_in)
+                axs[i+1].xticks = ([0, π], ["0", "π"])
+                axs[i+1].xticklabelsize = label_pt
+            end
+
+            i_col += 1
+        end
+
+        # --------------------------------------------------------------------
 
         if col == :T
-            axs[1, i_col].title = L"$S$"
-            hidedecorations!(axs[1, i_col])
+            axs[1].title = L"$S$"
+            hidedecorations!(axs[1])
 
-            heatmap!(axs[1, i_col], oi(S))
+            heatmap!(axs[1], oi(S))
 
             for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = L"$T^{(%$n)}$"
-                hidedecorations!(axs[i+1, i_col])
+                axs[i+1].title = L"$T^{(%$n)}$"
+                hidedecorations!(axs[i+1])
 
-                heatmap!(axs[i+1, i_col], oi(T[n]))
+                heatmap!(axs[i+1], oi(T[n]))
             end
+
+            i_col += 1
         end
+
+        # --------------------------------------------------------------------
 
         if col == :Tj
             axs[1, i_col].title = L"$S_{%$j}$"
-            hidedecorations!(axs[1, i_col])
+            hidedecorations!(axs[1])
 
-            heatmap!(axs[1, i_col], oi(Sj))
+            heatmap!(axs[1], oi(Sj))
 
             for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = L"$T^{(%$n)}_{%$j}$"
-                hidedecorations!(axs[i+1, i_col])
+                axs[i+1].title = L"$T^{(%$n)}_{%$j}$"
+                hidedecorations!(axs[i+1])
 
-                heatmap!(axs[i+1, i_col], oi(Tj[n]))
+                heatmap!(axs[i+1], oi(Tj[n]))
             end
+
+            i_col += 1
         end
 
-        if col == :pdff
-            axs[1, i_col].title = L"PDFF: $\Phi_{ML}$"
-            hidedecorations!(axs[1, i_col])
+        # --------------------------------------------------------------------
 
-            heatmap!(axs[1, i_col],
+        if col == :pdff
+            axs[1].title = L"PDFF: $\Phi_{ML}$"
+            hidedecorations!(axs[1])
+
+            heatmap!(axs[1],
                 oi(pdff[1]),
                 colormap=cm_pdff,
                 colorrange=(0, 1),
                 nan_color=:black,
             )
 
-            for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = L"PDFF: $\Phi\left(\varphi^{(%$n)}\right)$"
-                hidedecorations!(axs[i+1, i_col])
+            if :pdff ∈ colbars
+                Colorbar(fig[1, i_col+1],
+                    colorrange=(0, 1),
+                    colormap=cm_pdff,
+                    ticklabelsize=label_pt,
+                    ticks=([0.0, 1], ["0", "1"]),
+                )
+            end
 
-                heatmap!(axs[i+1, i_col],
+            for (i, n) in enumerate(ϕns)
+                axs[i+1].title = L"PDFF: $\Phi\left(\varphi^{(%$n)}\right)$"
+                hidedecorations!(axs[i+1])
+
+                heatmap!(axs[i+1],
                     oi(pdff[n+1]),
                     colormap=cm_pdff,
                     colorrange=(0, 1),
                     nan_color=:black,
                 )
+
+                if :pdff ∈ colbars
+                    Colorbar(fig[i+1, i_col+1],
+                        colorrange=(0, 1),
+                        colormap=cm_pdff,
+                        ticklabelsize=label_pt,
+                        ticks=([0.0, 1], ["0", "1"]),
+                    )
+                end
             end
+
+            i_col += :pdff ∈ colbars ? 2 : 1
         end
 
-        if col == :ϕ_loc
-            axs[1, i_col].title = ϕ_rng_2π ?
-                                  L"$\left[\,\Phi_{ML}\,\right]_{2\pi}$" : L"$\Phi_{ML}$"
-            hidedecorations!(axs[1, i_col])
+        # --------------------------------------------------------------------
 
-            heatmap!(axs[1, i_col],
-                ϕ_rng_2π ? oi(BM.map_2π(ϕ_loc[1])) : oi(ϕ_loc[1]),
-                colormap=cm_ϕ,
-                colorrange=rng_ϕ,
+        if col == :ϕ_loc
+            axs[1].title = L"$\Phi_{ML}$"
+            hidedecorations!(axs[1])
+
+            heatmap!(axs[1],
+                oi(ϕ_loc[1]),
+                colormap=cmO,
+                colorrange=(-π, π),
                 nan_color=:black,
             )
 
+            if :ϕ_loc ∈ colbars
+                Colorbar(fig[1, i_col+1],
+                    colorrange=(-π, π),
+                    colormap=cmO,
+                    ticklabelsize=label_pt,
+                    ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                )
+            end
+
             for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = ϕ_rng_2π ?
-                                        L"$\left[\,\Phi\left(\varphi^{(%$n)}\right)\,\right]_{2\pi}$" :
-                                        L"$\Phi\left(\varphi^{(%$n)}\right)$"
+                axs[i+1].title = ϕ_rng_2π ?
+                                 L"$\left[\,\Phi\left(\varphi^{(%$n)}\right)\,\right]_{2\pi}$" :
+                                 L"$\Phi\left(\varphi^{(%$n)}\right)$"
 
-                hidedecorations!(axs[i+1, i_col])
+                hidedecorations!(axs[i+1])
 
-                heatmap!(axs[i+1, i_col],
+                heatmap!(axs[i+1],
                     ϕ_rng_2π ? oi(BM.map_2π(ϕ_loc[n+1])) : oi(ϕ_loc[n+1]),
                     colormap=cm_ϕ,
                     colorrange=rng_ϕ,
                     nan_color=:black,
                 )
+
+                if :ϕ_loc ∈ colbars
+                    if ϕ_rng_2π
+                        Colorbar(fig[i+1, i_col+1],
+                            colorrange=rng_ϕ,
+                            colormap=cm_ϕ,
+                            ticklabelsize=label_pt,
+                            ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                        )
+                    else
+                        Colorbar(fig[i+1, i_col+1],
+                            colorrange=rng_ϕ,
+                            colormap=cm_ϕ,
+                            ticklabelsize=label_pt,
+                        )
+                    end
+                end
             end
+
+            i_col += :ϕ_loc ∈ colbars ? 2 : 1
         end
 
-        if col == :ϕ
-            axs[1, i_col].title = L"$\left[\,\nabla_%$j\Phi_{ML}\,\right]_{2\pi}$"
-            hideydecorations!(axs[1, i_col])
+        # --------------------------------------------------------------------
 
-            mi, ma = min(∇Φ_ML[Sj]...), max(∇Φ_ML[Sj]...)
-            bins = range(mi, ma, nbins + 1)
-            hist!(axs[1, i_col], ∇Φ_ML[Sj], bins=bins, scale_to=1, color=(col_out, alpha_out))
-            hist!(axs[1, i_col], ∇Φ_ML[Tj[1]], bins=bins, scale_to=1, color=col_in)
-            axs[1, i_col].xticks = ([-π, 0.0, π], ["-π", "0", "π"])
-            axs[1, i_col].xticklabelsize = 9pt
+        if col == :ϕ
+            axs[1].title = L"$\left|\,\nabla_%$j\,\Phi_{ML}\,\right|$"
+            hideydecorations!(axs[1])
+
+            bins = range(0, π, bin_mode == :fixed ? nbins + 1 : ceil(Int, (2sum(Sj))^(1 / 3)) + 1)
+            @views hist!(axs[1], abs.(∇Φ_ML[Sj]), bins=bins, scale_to=1, color=(col_out, alpha_out))
+            @views hist!(axs[1], abs.(∇Φ_ML[Tj[1]]), bins=bins, scale_to=1, color=col_in)
+            axs[1].xticks = ([0, π], ["0", "π"])
+            axs[1].xticklabelsize = label_pt
 
             for (i, n) in enumerate(ϕns)
-                axs[i+1, i_col].title = ϕ_rng_2π ?
-                                        L"$\left[\,\varphi^{(%$n)}\,\right]_{2\pi}$" :
-                                        L"$\varphi^{(%$n)}$"
-                hidedecorations!(axs[i+1, i_col])
+                axs[i+1].title = ϕ_rng_2π ?
+                                 L"$\left[\,\varphi^{(%$n)}\,\right]_{2\pi}$" :
+                                 L"$\varphi^{(%$n)}$"
+                hidedecorations!(axs[i+1])
 
-                heatmap!(axs[i+1, i_col],
+                heatmap!(axs[i+1],
                     ϕ_rng_2π ? oi(BM.map_2π(ϕ[n])) : oi(ϕ[n]),
                     colormap=cm_ϕ,
                     colorrange=rng_ϕ,
                     nan_color=:black,
                 )
+
+                if :ϕ ∈ colbars
+                    if ϕ_rng_2π
+                        Colorbar(fig[i+1, i_col+1],
+                            colorrange=rng_ϕ,
+                            colormap=cm_ϕ,
+                            ticklabelsize=label_pt,
+                            ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                        )
+                    else
+                        Colorbar(fig[i+1, i_col+1],
+                            colorrange=rng_ϕ,
+                            colormap=cm_ϕ,
+                            ticklabelsize=label_pt,
+                        )
+                    end
+                end
             end
+
+            i_col += :ϕ ∈ colbars ? 2 : 1
         end
+
+        # --------------------------------------------------------------------
+
+        if col == :Φ
+            axs[1].title = L"$\Phi_{ML}$"
+            hidedecorations!(axs[1])
+
+            heatmap!(axs[1],
+                oi(ϕ_loc[1]),
+                colormap=cmO,
+                colorrange=(-π, π),
+                nan_color=:black,
+            )
+
+            if :Φ ∈ colbars
+                Colorbar(fig[1, i_col+1],
+                    colorrange=(-π, π),
+                    colormap=cmO,
+                    ticklabelsize=label_pt,
+                    ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                )
+            end
+
+            for (i, n) in enumerate(ϕns)
+                axs[i+1].title = L"$\Phi^{(%$n)}$"
+                hidedecorations!(axs[i+1])
+
+                heatmap!(axs[i+1],
+                    oi(Φ[n]),
+                    colormap=cmO,
+                    colorrange=(-π, π),
+                    nan_color=:black,
+                )
+
+                if :Φ ∈ colbars
+                    Colorbar(fig[i+1, i_col+1],
+                        colorrange=(-π, π),
+                        colormap=cmO,
+                        ticklabelsize=label_pt,
+                        ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                    )
+                end
+            end
+
+            i_col += :Φ ∈ colbars ? 2 : 1
+        end
+
+        # --------------------------------------------------------------------
+
+        if col == :∇Φ
+            axs[1].title = L"$\nabla_{%$j}\,\Phi_{ML}$"
+            hidedecorations!(axs[1])
+
+            heatmap!(axs[1],
+                oi(∇Φ[1]),
+                colormap=cmO,
+                colorrange=(-π, π),
+                nan_color=:black,
+            )
+
+            if :∇Φ ∈ colbars
+                Colorbar(fig[1, i_col+1],
+                    colorrange=(-π, π),
+                    colormap=cmO,
+                    ticklabelsize=label_pt,
+                    ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                )
+            end
+
+            for (i, n) in enumerate(ϕns)
+                axs[i+1].title = L"$\nabla_{%$j}\,\Phi^{(%$n)}$"
+                hidedecorations!(axs[i+1])
+
+                heatmap!(axs[i+1],
+                    oi(∇Φ[n]),
+                    colormap=cmO,
+                    colorrange=(-π, π),
+                    nan_color=:black,
+                )
+
+                if :∇Φ ∈ colbars
+                    Colorbar(fig[i+1, i_col+1],
+                        colorrange=(-π, π),
+                        colormap=cmO,
+                        ticklabelsize=label_pt,
+                        ticks=([-π, 0.0, π], ["-π", "0", "π"]),
+                    )
+                end
+            end
+
+            i_col += :Φ ∈ colbars ? 2 : 1
+        end
+
+        # --------------------------------------------------------------------
+
     end
 
     az = ['A':'Z';]
@@ -726,14 +940,14 @@ function phaser_phase_histograms(PH, fitpar, fitopt;
         maz = reshape(az[1:nrows*ncols], ncols, nrows)
 
         for i in 1:nrows, j in 1:ncols
-            Label(fig[i, j, TopLeft()], string(maz[j, i]),
+            Label(fig[i, v_col[j], TopLeft()], string(maz[j, i]),
                 font=:bold,
                 padding=(0, -20, 5, 0),
                 halign=:right)
         end
     end
 
-    (fig, axs, ϕ_loc, pdff)
+    (fig, ϕ_loc, pdff)
 end
 
 function phaser_workflow!(PH;
