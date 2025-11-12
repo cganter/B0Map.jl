@@ -76,24 +76,16 @@ Data structure holding the fit parameters.
 - `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
-- `λ::Float`: Relative weight of gradient-based estimate
-- `balance_cost`: Max. number of cost-based balancing
-- `balance_data`: Max. number of data-based balancing
+- `balance`: Max. number of data-based balancing
 - `μ_tikh::Float`: (Small) Tikhonov regularization parameter
 - `K::Vector{Int}`: Fourier Kernel size
 - `os_fac::Vector{Float64}`: oversampling factor
 - `redundancy::Float64`: 
 - `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
-- `remove_gradient_outliers::Bool`: Try to eliminate gradient outliers
-- `remove_local_outliers::Bool`: Try to eliminate local outliers
-- `balance::Bool`: Balance local and gradient fit
 - `optim_balance::Bool`: Optimization during balancing of local and gradient fit
-- `max_iter_PHASER::Int`: max. number of balanced iterations
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
-- `verbose::Bool`: Print information about what is actually done.
-- `diagnostics::Bool`: Return diagnostic information, e.g. for debugging.
-- `accel::Symbol`: Which acceleration technique should be used. Supported values are `:md` (multi-threading) and `:cuda` (GPU).
+- `accel::Symbol`: Which acceleration technique should be used. Supported values are `:mt` (multi-threading) and `:cuda` (GPU).
 ## Remark
 - Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) to modify `n_ϕ`, since only then `ϕ_rngs` will be set properly.
 """
@@ -108,23 +100,15 @@ mutable struct FitOpt
     optim::Bool
     optim_phaser::Bool
     autodiff::Symbol
-    λ::Float64
-    balance_cost::Int
-    balance_data::Int
+    balance::Int
     μ_tikh::Float64
     K::Vector{Int}
     os_fac::Vector{Float64}
     redundancy::Float64
     subsampling::Symbol
-    remove_gradient_outliers::Bool
-    remove_local_outliers::Bool
-    test_frac::Float64
-    balance::Bool
     optim_balance::Bool
     n_chunks::Int
     rng::MersenneTwister
-    verbose::Bool
-    diagnostics::Bool
     accel::Symbol
 end
 
@@ -132,26 +116,6 @@ end
     fitOpt(ϕ_scale = 1.0)
 
 Default constructor for [FitOpt](@ref FitOpt)
-
-## Default values
-- `n_ϕ == 4`
-- `ϕ_rngs == phase_search_intervals(n_ϕ, ϕ_scale)`
-- `Δϕ2 == π / n_ϕ`
-- `R2s_rng == [0.0, 1.0]`
-- `ϕ_acc == 1.e-4`
-- `R2s_acc == 1.e-4`
-- `local_fit == true`
-- `optim == true`
-- `optim_phaser == true`
-- `autodiff == :finite`
-- `λ == 0.0`
-- `balance_cost == 10`
-- `balance_data == 2`
-- `μ_tikh == 1.e-6`
-- `n_chunks == 8Threads.nthreads()`
-- `verbose == false`
-- `diagnostics == false`
-- `accel == :mt`
 """
 function fitOpt(ϕ_scale = 1.0)
     n_ϕ = 4
@@ -164,29 +128,21 @@ function fitOpt(ϕ_scale = 1.0)
     optim = true
     optim_phaser = true
     autodiff = :finite
-    λ = 0.0
-    balance_cost = 0
-    balance_data = 3
+    balance = 3
     μ_tikh = 1.e-6
     K = []
-    os_fac = [1.5]
+    os_fac = [1.3]
     redundancy = Inf
     subsampling = :fibonacci
-    remove_gradient_outliers = true
-    remove_local_outliers = true
-    test_frac = 0.5
-    balance = true
     optim_balance = false
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
-    verbose = false
-    diagnostics = false
     accel = :mt
-    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, local_fit, optim, optim_phaser, autodiff, λ, 
-            balance_cost, balance_data, μ_tikh, K, 
-            os_fac, redundancy, subsampling, remove_gradient_outliers, remove_local_outliers,
-            test_frac, balance, optim_balance,
-            n_chunks, rng, verbose, diagnostics, accel)
+    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, local_fit, optim, optim_phaser, autodiff, 
+            balance, μ_tikh, K, 
+            os_fac, redundancy, subsampling, 
+            optim_balance,
+            n_chunks, rng, accel)
 end
 
 """

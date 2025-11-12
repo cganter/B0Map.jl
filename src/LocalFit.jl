@@ -49,8 +49,6 @@ function local_fit_mt!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREM
 
     full_optim = fitopt.R2s_rng[1] < fitopt.R2s_rng[2]
 
-    fitopt.verbose && print("Local GSS fit ... ")
-
     # do the work
     Threads.@threads for cis_chunk in cis_chunks
         # take free models
@@ -62,8 +60,6 @@ function local_fit_mt!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREM
         # put the model back
         put!(ch_gre, gre)
     end
-
-    fitopt.verbose && println("done.")
 
     # close channel
     close(ch_gre)

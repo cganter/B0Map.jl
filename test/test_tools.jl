@@ -56,9 +56,7 @@ mutable struct SimPhaPar
     # PHASER settings
     redundancy::Float64
     subsampling::Symbol
-    balance::Bool
-    remove_gradient_outliers::Bool
-    remove_local_outliers::Bool
+    balance::Int
     local_fit::Bool
     optim::Bool
     optim_phaser::Bool
@@ -122,9 +120,7 @@ function SimPhaPar()
     # PHASER settings
     redundancy = Inf
     subsampling = :fibonacci
-    balance = true
-    remove_gradient_outliers = true
-    remove_local_outliers = true
+    balance = 2
     local_fit = true
     optim = true
     optim_phaser = true
@@ -142,7 +138,7 @@ function SimPhaPar()
         S_zc, ϕ_zc, R2s_zc, f_zc, coils_zc,
         S_holes, S_io,
         ϕ_proj, ϕ_med,
-        redundancy, subsampling, balance, remove_gradient_outliers, remove_local_outliers, 
+        redundancy, subsampling, balance, 
         local_fit, optim, optim_phaser, μ_tikh, n_chunks, rng
     )
 end
@@ -379,48 +375,23 @@ function simulate_phantom(spp::SimPhaPar)
     fitopt.redundancy = spp.redundancy
     fitopt.subsampling = spp.subsampling
     fitopt.balance = spp.balance
-    fitopt.remove_gradient_outliers = spp.remove_gradient_outliers
-    fitopt.remove_local_outliers = spp.remove_local_outliers
     fitopt.local_fit = spp.local_fit
     fitopt.optim = spp.optim
     fitopt.optim_phaser = spp.optim_phaser
     fitopt.os_fac = spp.os_fac
     fitopt.μ_tikh = spp.μ_tikh
     fitopt.rng = spp.rng
-    fitopt.diagnostics = true
 
     # smooth subspace
     bs = BM.fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
 
     # apply PHASER
-    fp, fo = deepcopy(fitpar), deepcopy(fitopt)
-    bm = BM.B0map!(fp, fo, bs)    
-    rp = BM.phaser!(fitpar, fitopt, bs)
+    bm = BM.B0map!(fitpar, fitopt, bs)    
 
     # ------------ preparing results ------------
 
-    PH = rp.PH
-    to = rp.to
-
-    noS = phantom.noS
-    noS_ML = (!).(PH.S_wo)
-
-    PH.ϕ_ML[noS_ML] .= NaN
-
-    PH.ϕ0[noS] .= NaN
-    PH.ϕ1[noS] .= NaN
-    PH.ϕ1_wo[noS] .= NaN
-    PH.Δϕ0[noS] .= NaN
-    PH.Δϕ1[noS] .= NaN
-
-    noSj = [(!).(PH.Sj[j]) for j in 1:2]
-    for j in 1:2
-        PH.y[j][noSj[j]] .= NaN
-        PH.u[j][noSj[j]] .= NaN
-        PH.u0[j][noSj[j]] .= NaN
-    end
-
-    fitpar.ϕ[noS] .= NaN
+    PH = bm.PH
+    to = bm.to
 
     # ------------ return everything ------------
 
