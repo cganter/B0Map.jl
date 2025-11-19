@@ -77,8 +77,10 @@ Data structure holding the fit parameters.
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
 - `balance`: Max. number of data-based balancing
+- `rapid_balance`: if true, `R2s = 0` will be assumed during balancing
 - `μ_tikh::Float`: (Small) Tikhonov regularization parameter
 - `K::Vector{Int}`: Fourier Kernel size
+- `multi_scale::Bool`: if `true`, gradient based fitting will start with smooth kernel
 - `os_fac::Vector{Float64}`: oversampling factor
 - `redundancy::Float64`: 
 - `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
@@ -101,8 +103,10 @@ mutable struct FitOpt
     optim_phaser::Bool
     autodiff::Symbol
     balance::Int
+    rapid_balance::Bool
     μ_tikh::Float64
     K::Vector{Int}
+    multi_scale::Bool
     os_fac::Vector{Float64}
     redundancy::Float64
     subsampling::Symbol
@@ -129,8 +133,10 @@ function fitOpt(ϕ_scale = 1.0)
     optim_phaser = true
     autodiff = :finite
     balance = 3
+    rapid_balance = true
     μ_tikh = 1.e-6
     K = []
+    multi_scale = true
     os_fac = [1.3]
     redundancy = Inf
     subsampling = :fibonacci
@@ -139,7 +145,7 @@ function fitOpt(ϕ_scale = 1.0)
     rng = MersenneTwister()
     accel = :mt
     FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, local_fit, optim, optim_phaser, autodiff, 
-            balance, μ_tikh, K, 
+            balance, rapid_balance, μ_tikh, K, multi_scale,
             os_fac, redundancy, subsampling, 
             optim_balance,
             n_chunks, rng, accel)

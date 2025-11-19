@@ -54,38 +54,36 @@ fitopt = BM.fitOpt()
 fitopt.K = [3, 3, 3]
 fitopt.R2s_rng = [0.0, 0.0]   # R2* ≡ 0 for two-echo GRE
 fitopt.redundancy = 100
-fitopt.subsampling = :random
+fitopt.subsampling = :fibonacci
 fitopt.local_fit = false # we only want to reconstruct a single slice
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
 fitopt.μ_tikh = 1e-5
 fitopt.balance = 2
+fitopt.rapid_balance = true
+fitopt.multi_scale = true
 
-# set up Fourier Kernel
-Nρ = size(data)[1:3]
-bs = BM.fourier_lin(Nρ[1:length(fitopt.K)], fitopt.K; os_fac=fitopt.os_fac)
-
-cal = BM.B0map!(fitpar, fitopt, bs);
+cal = BM.B0map!(fitpar, fitopt);
 
 # to reset diagnostics
 ϕ_loc = pdff = nothing
 
 ##
 
-n_max = fitopt.balance + 1
+n_grad, n_bal = cal.PH.n_grad, cal.PH.n_bal
+n_max = n_grad + n_bal
 
 _Φ = [(val=:Φ, cm=:romaO, n=n, colbar=true) for n in 0:n_max]
-_Φ_red = [(val=:Φ_red, cm=:roma, n=n, colbar=true) for n in 1:n_max]
+_Φ_red = [(val=:Φ_red, cm=:romaO, n=n, colbar=true) for n in 1:n_max]
 _ϕ = [(val=:ϕ, rng_2π=true, cm=:romaO, n=n, colbar=true) for n in 1:n_max]
 _ϕ_loc = [(val=:ϕ_loc, rng_2π=true, cm=:romaO, n=n, colbar=true) for n in 0:n_max]
 _pdff = [(val=:pdff, cm=:imola, n=n, colbar=true) for n in 0:n_max]
 _hist_Φ = [(val=:hist_Φ, n=n, nbins=40, bin_mode=:rice) for n in 0:n_max]
 _hist_a∇Φ = [(val=:hist_a∇Φ, n=n, nbins=40, bin_mode=:rice) for n in 0:n_max]
 
-plots = [_Φ[1] _ϕ[1] _ϕ[2] _ϕ[3];
-         _hist_a∇Φ[1] _Φ_red[1] _Φ_red[2] _Φ_red[3];
-         _hist_Φ[1] _hist_Φ[2] _hist_Φ[3] _hist_Φ[4];
-         _pdff[1] _pdff[2] _pdff[3] _pdff[4]]
+plots = [_Φ[1] _ϕ_loc[1] _hist_a∇Φ[1] _pdff[1];
+    _ϕ[n_grad] _ϕ_loc[n_grad+1] _hist_Φ[n_grad+1] _pdff[n_grad+1];
+    _ϕ[end] _ϕ_loc[end] _hist_Φ[end] _pdff[end]]
 
 (fig, dax, ϕ_loc, pdff) = phaser_plots(plots, cal.PH, fitpar, fitopt;
     width_per_plot=230,
@@ -93,7 +91,7 @@ plots = [_Φ[1] _ϕ[1] _ϕ[2] _ϕ[3];
     col_in=:blue, col_out=:red, alpha_out=0.3,
     font_pt=12, label_pt=8,
     slice=64,
-    j=2,
+    j=1,
     oi=x -> rotl90(x[:, end:-1:1]),
     letters=true,
     ϕ_loc=ϕ_loc,

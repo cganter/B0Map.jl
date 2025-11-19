@@ -57,16 +57,17 @@ function phase_map(::BSmooth, ::AbstractVector) end
 
 TBW
 """
-function B0map!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+function B0map!(fitpar::FitPar, fitopt::FitOpt)
     # timing will always be monitored
     to = TimerOutput()
     @timeit to "B0 map" begin
 
         # ======================================================================
-        # check dimension
+        # set up Fourier kernel
         # ======================================================================
 
-        @assert N == ndims(fitpar.S)
+        d = length(fitopt.K)
+        bs = fourier_lin(size(fitpar.data)[1:d], fitopt.K; os_fac=fitopt.os_fac)
 
         # ======================================================================
         # subsampling mask
@@ -164,18 +165,39 @@ function phaser!(Φ_ML, S, Sj, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutpu
         # ======================================================================
         # gradient-based estimate
         # ======================================================================
-        gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, bs, info, to)
+
+        n_grad = 0
+
+        if fitopt.multi_scale
+            K_ = ones(Int, N)
+            @assert all(x -> x ≥ 0, fitopt.K - K_)
+
+            while true
+                bs_ = fourier_lin(size(fitpar.data)[1:N], K_; os_fac=fitopt.os_fac)
+                gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, bs_, info, to)
+                n_grad += 1
+
+                fitopt.K == K_ && break
+
+                K_[fitopt.K.>K_] .+= 1
+            end
+        else
+            gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, bs, info, to)
+
+            n_grad += 1
+        end
 
         # ======================================================================
         # PHASER loop
         # ======================================================================
 
-        i_data = 1
+        i_data, n_bal = 1, 0
 
         while i_data <= fitopt.balance
             println("data: ", i_data, "/", fitopt.balance)
 
             balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs, info, to)
+            n_bal += 1
 
             masks_changed(T, Tj, i_data) || break
 
@@ -186,7 +208,7 @@ function phaser!(Φ_ML, S, Sj, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutpu
         # return results
         # ======================================================================
 
-        (; ϕ, Φ_ML, ∇Φ_ML, Φ, ∇Φ, T, Tj, S, Sj, R, info)
+        (; ϕ, Φ_ML, ∇Φ_ML, Φ, ∇Φ, T, Tj, S, Sj, R, n_grad, n_bal, info)
     end
 end
 
@@ -339,6 +361,8 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
         # first we determine the maximally allowed u in each direction        
         a∇Φ_hist = Histogram[]
         a∇Φ_max = Float64[]
+        cntrs = Vector{Float64}[]
+        wghts = Vector{Float64}[]
 
         for j in 1:ndims(S)
             # setting (2n)^(1/3) ("Rice rule") for the number bins in the histogram was motivated in 
@@ -348,23 +372,17 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
             a∇Φ = abs.(∇Φ[j][Sj[j]])
             # boundaries of bin intervals
             edges = @views range(0.0, max(a∇Φ...), nbins + 1)
-            # median over Sj
-            med = @views median(a∇Φ)
-            # the first histogram peak (starting from zero) corresponds to ∇ξ = 0 (see article)
-            # and due to dimensional arguments, the majority u's should be part of it.
-            # the index `iemin` of the median can therefore be used as a starting point
-            iemin = findfirst(e -> e > med, edges)
+            push!(cntrs, 0.5(edges[1:end-1] + edges[2:end]))
             # generate the histogram curve based upon the bins defined above
             push!(a∇Φ_hist, fit(Histogram, a∇Φ, edges))
-            # it is difficult to formulate a general criterion, how to choose a max. allowed
-            # value of `abs(u)`. Assuming that there is a relevant second peak, one can search
-            # for the minimum of the histogram for `u > median(abs(u))`
-            # if there is outlier, this should autmatically include the relevant part of the 
-            # histogram (which a purely local derivative cannot provide with similar stability)
-            weights = savitzky_golay(a∇Φ_hist[end].weights, 7, 1).y
+            # in addition to the Rice conditition, we further smooth the histogram
+            push!(wghts, savitzky_golay(a∇Φ_hist[end].weights, 3, 1).y)
+            # search for the largest peak
+            iemin = findmax(wghts[end])[2]
+            # starting from zero, include the right flank until local minimum occurs
             fimi = iemin
             fimi_test = fimi + 1
-            while fimi_test <= nbins && weights[fimi_test] < weights[fimi]
+            while fimi_test <= nbins && wghts[end][fimi_test] < wghts[end][fimi]
                 fimi = fimi_test
                 fimi_test += 1
             end
@@ -374,6 +392,10 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
 
         haskey(ig, :a∇Φ_hist) || (ig[:a∇Φ_hist] = typeof(a∇Φ_hist)[])
         push!(ig[:a∇Φ_hist], a∇Φ_hist)
+        haskey(ig, :centers) || (ig[:centers] = typeof(cntrs)[])
+        push!(ig[:centers], cntrs)
+        haskey(ig, :weights) || (ig[:weights] = typeof(wghts)[])
+        push!(ig[:weights], wghts)
         haskey(ig, :a∇Φ_max) || (ig[:a∇Φ_max] = typeof(a∇Φ_max)[])
         push!(ig[:a∇Φ_max], a∇Φ_max)
 
@@ -402,25 +424,26 @@ function remove_local_outliers!(T, S, Φ, info, to)
         nbins = ceil(Int, (2sum(S))^(1 / 3))
         # boundaries of bin intervals
         edges = @views range(min(Φ[S]...), max(Φ[S]...), nbins + 1)
+        cntrs = 0.5(edges[1:end-1] + edges[2:end])
         # generate the histogram curve based upon the bins defined above
         Φ_hist = @views fit(Histogram, Φ[S], edges)
-
+        # take the weights and apply an additional smoothing filter
+        wghts = savitzky_golay(Φ_hist.weights, 3, 1).y
         # we assume the largest peak to correspond to the correct solution
-        ip = argmax(Φ_hist.weights)
+        ip = argmax(wghts)
         # now we go down on both flanks of the peak until the next local minimum is reached
-        weights = savitzky_golay(Φ_hist.weights, 7, 1).y
         ip_min = ip_max = ip
         ip_max_test = ip_max + 1
         while ip_max_test <= nbins &&
-            (weights[ip_max_test] < weights[ip_max] ||
-             weights[ip_max_test] > 0.7 * weights[ip])
+            (wghts[ip_max_test] < wghts[ip_max] ||
+             wghts[ip_max_test] > 0.7 * wghts[ip])
             ip_max = ip_max_test
             ip_max_test += 1
         end
         ip_min_test = ip_min - 1
         while ip_min_test >= 1 &&
-            (weights[ip_min_test] < weights[ip_min] ||
-             weights[ip_min_test] > 0.7 * weights[ip])
+            (wghts[ip_min_test] < wghts[ip_min] ||
+             wghts[ip_min_test] > 0.7 * wghts[ip])
             ip_min = ip_min_test
             ip_min_test -= 1
         end
@@ -434,6 +457,10 @@ function remove_local_outliers!(T, S, Φ, info, to)
 
         haskey(ig, :Φ_hist) || (ig[:Φ_hist] = typeof(Φ_hist)[])
         push!(ig[:Φ_hist], Φ_hist)
+        haskey(ig, :centers) || (ig[:centers] = typeof(cntrs)[])
+        push!(ig[:centers], cntrs)
+        haskey(ig, :weights) || (ig[:weights] = typeof(wghts)[])
+        push!(ig[:weights], wghts)
         haskey(ig, :Φ_min) || (ig[:Φ_min] = typeof(Φ_min)[])
         push!(ig[:Φ_min], Φ_min)
         haskey(ig, :Φ_max) || (ig[:Φ_max] = typeof(Φ_max)[])
@@ -521,6 +548,7 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fit
         fitparλ = fitPar(fitpar.grePar, fitpar.data, S)
         fitoptλ.optim = fitopt.optim_balance
         set_num_phase_intervals(fitparλ, fitoptλ, 0)
+        fitoptλ.rapid_balance && (fitoptλ.R2s_rng = [0.0, 0.0])
 
         χ2_λ_fun = create_χ2_λ_fun(fitparλ, fitoptλ, bs, BtB, BtΦ, ∇Bt∇B, ∇Bt∇Φ, Φ2, ∇Φ2, ϕ, to)
 

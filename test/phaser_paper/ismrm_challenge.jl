@@ -7,7 +7,8 @@ include("ph_util.jl")
 BLAS.set_num_threads(1)
 
 # ISMRM challenge 2012 data sets:
-data_set, slice = 5, 3
+data_set, slice = 17, 2
+#data_set, slice = 5, 2
 #data_set, slice = 12, 2
 oi = orient_ISMRM(data_set)
 
@@ -31,10 +32,18 @@ oi = orient_ISMRM(data_set)
 
 # set PHASER parameters
 fitopt = BM.fitOpt()
-fitopt.K = [5, 5]
+fitopt.K = [7, 7]
 fitopt.redundancy = Inf
 fitopt.os_fac = [1.3]
-fitopt.balance = 2
+fitopt.balance = 5
+fitopt.rapid_balance = true
+fitopt.multi_scale = false
+
+# calculate score
+
+d = ismrm_challenge_score(fitopt; data_sets = (1:2...,4:17...));
+
+##
 
 # apply PHASER
 cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
@@ -43,28 +52,46 @@ cal = ismrm_challenge(fitopt; data_set=data_set, slice=slice);
 
 ##
 
-n_max = fitopt.balance + 1
+n_grad, n_bal = cal.PH.n_grad, cal.PH.n_bal
+n_max = n_grad + n_bal
 
 _Φ = [(val=:Φ, cm=:romaO, n=n, colbar=true) for n in 0:n_max]
-_Φ_red = [(val=:Φ_red, cm=:roma, n=n, colbar=true) for n in 1:n_max]
+_Φ_red = [(val=:Φ_red, cm=:romaO, n=n, colbar=true) for n in 1:n_max]
+_∇Φ = [(val=:∇Φ, cm=:managua, cm_rng=(-0.2, 0.2), n=n, colbar=true) for n in 0:n_max]
+_a∇Φ = [(val=:a∇Φ, cm=:imola, cm_rng=(0, 1), n=n, colbar=true) for n in 0:n_max]
+_∇Φ_red = [(val=:∇Φ_red, cm=:managua, cm_rng=(-0.2, 0.2), n=n, colbar=true) for n in 1:n_max]
+_a∇Φ_red = [(val=:a∇Φ_red, cm=:imola, cm_rng=(0, 0.2), n=n, colbar=true) for n in 1:n_max]
 _ϕ = [(val=:ϕ, rng_2π=false, cm=:roma, n=n, colbar=true) for n in 1:n_max]
-_ϕ_loc = [(val=:ϕ_loc, rng_2π=true, cm=:romaO, n=n, colbar=true) for n in 0:n_max]
+_ϕ_loc = [(val=:ϕ_loc, rng_2π=false, cm=:roma, n=n, colbar=true) for n in 0:n_max]
 _pdff = [(val=:pdff, cm=:imola, n=n, colbar=true) for n in 0:n_max]
-_hist_Φ = [(val=:hist_Φ, n=n, nbins=50, bin_mode=:fixed) for n in 0:n_max]
+_hist_Φ = [(val=:hist_Φ, n=n, nbins=100, bin_mode=:fixed) for n in 0:n_max]
+_hist_ϕ_Φ = [(val=:hist_ϕ_Φ, n=n, nbins=100, bin_mode=:fixed) for n in 1:n_max]
 _hist_a∇Φ = [(val=:hist_a∇Φ, n=n, nbins=50, bin_mode=:fixed) for n in 0:n_max]
+_χ2λ = [(val=:χ2λ, n=n) for n in 1:n_bal]
 
-plots = [_Φ[1] _ϕ[1] _ϕ[2] _ϕ[end];
-         _hist_a∇Φ[1] _Φ_red[1] _Φ_red[2] _Φ_red[end];
-         _hist_Φ[1] _hist_Φ[2] _hist_Φ[3] _hist_Φ[end];
-         _pdff[1] _pdff[2] _pdff[3] _pdff[end]]
+#=
+plots = [_hist_Φ[9] _ϕ[1] _ϕ[2] _ϕ[3];
+        _hist_Φ[end] _ϕ_loc[end] _pdff[end] _ϕ[end]]
 
-(fig, dax, ϕ_loc, pdff) = phaser_plots(plots, cal.bm.PH, cal.fitpar, fitopt;
-    width_per_plot=260,
-    height_per_plot=200,
+plots = [_Φ[1] _hist_a∇Φ[1] _hist_Φ[1] _pdff[1];
+    _Φ_red[n_grad] _ϕ[n_grad] _hist_Φ[n_grad+1] _pdff[n_grad+1];
+    _Φ_red[end] _ϕ[end] _hist_Φ[end] _pdff[end]]
+
+plots = [_∇Φ[1] _∇Φ_red[1];
+    _ϕ[1] _a∇Φ_red[1]]
+=#
+plots = [_Φ[1] _Φ_red[1] _hist_Φ[1] _pdff[1];
+    _Φ_red[n_grad] _ϕ[n_grad] _hist_Φ[n_grad+1] _pdff[n_grad+1];
+    _Φ_red[end] _ϕ[end] _hist_Φ[end] _pdff[end]]
+
+
+(fig, dax, ϕ_loc, pdff) = phaser_plots(plots, cal.PH, cal.fitpar, fitopt;
+    width_per_plot=300,
+    height_per_plot=230,
     col_in=:blue, col_out=:red, alpha_out=0.3,
-    font_pt=12, label_pt=8,
+    font_pt=12, label_pt=10,
     slice=1,
-    j=1,
+    j=2,
     oi=oi,
     letters=true,
     ϕ_loc=ϕ_loc,
