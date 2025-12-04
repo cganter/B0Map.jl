@@ -54,14 +54,14 @@ fitopt = BM.fitOpt()
 fitopt.K = [3, 3, 3]
 fitopt.R2s_rng = [0.0, 0.0]   # R2* ≡ 0 for two-echo GRE
 fitopt.redundancy = 100
-fitopt.subsampling = :fibonacci
+fitopt.subsampling = :random
 fitopt.local_fit = false # we only want to reconstruct a single slice
 fitopt.os_fac = [1.3]
 fitopt.rng = MersenneTwister(42)
-fitopt.μ_tikh = 1e-5
+#fitopt.μ_tikh = 1e-5
 fitopt.balance = 2
 fitopt.rapid_balance = true
-fitopt.multi_scale = true
+fitopt.multi_scale = false
 
 cal = BM.B0map!(fitpar, fitopt);
 

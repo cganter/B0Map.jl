@@ -67,7 +67,7 @@ function ismrm_challenge(
     pdff_ref = datPar["ref"][:, :, slice]
 
     # return results
-    return (; fitpar, PH, pdff_ref, datPar, data_set, bm)
+    return (; fitpar, PH, pdff_ref, datPar, data_set, bm, data)
 end
 
 """
@@ -82,9 +82,30 @@ Apply PHASER to specified data set and slice.
 """
 function ismrm_challenge_score(
     fitopt::BM.FitOpt;
-    data_sets = 1:17,
-    n_digits = 2,
+    data_sets=1:17,
+    n_digits=2,
     ic_dir="test/data/ISMRM_challenge_2012/")
+
+    # data set anatomies
+    ds_anatomies = [
+        "knee (tra)",
+        "torso (cor)",
+        "foot, (sag)",
+        "knee (sag)",
+        "2 legs (tra)",
+        "2 legs (tra)",
+        "foot (sag)",
+        "thorax (tra)",
+        "head (cor)",
+        "hand (cor)",
+        "abdomen (tra)",
+        "abdomen (tra)",
+        "thorax (tra)",
+        "head/neck (cor)",
+        "breast (tra)",
+        "torso (sag)",
+        "shoulder (cor)"
+    ]
 
     # dictionary with the results
     d = Dict()
@@ -98,6 +119,9 @@ function ismrm_challenge_score(
 
         d[data_set] = Dict()
         d_ = d[data_set]
+
+        d_[:set] = data_set
+        d_[:anatomy] = ds_anatomies[data_set]
 
         # read data set
         nmb_str = data_set < 10 ? string("0", data_set) : string(data_set)
@@ -115,7 +139,8 @@ function ismrm_challenge_score(
         d_[:ΔTEs] = round.(d_[:ΔTEs], digits=n_digits)
 
         d_[:nTE] = nTE = length(TEs)
-        d_[:B0] = B0 = datPar["FieldStrength"]
+        B0 = datPar["FieldStrength"]
+        d_[:B0] = round(B0, digits=1)
         d_[:precession] = precession = (datPar["PrecessionIsClockwise"] != 1.0) ? :clockwise : :counterclockwise
 
         grePar = VP.modpar(BM.GREMultiEchoWF;
@@ -131,14 +156,20 @@ function ismrm_challenge_score(
         Nρ = size(datPar["images"])[1:2]
         data = zeros(ComplexF64, Nρ[1:2]..., nTE)
 
-        d_[:slice_score] = []
-        totW = 0
+        d_[:slice_score_ML] = []
+        d_[:slice_score_grad] = []
+        d_[:slice_score_PH] = []
+        totW_ML = 0
+        totW_grad = 0
+        totW_PH = 0
         totS = 0
 
         for slice in 1:n_slices
             copy!(data, reshape(datPar["images"][:, :, slice, 1, 1:nTE], Nρ..., nTE))
             data ./= max(abs.(data)...)
             S = datPar["eval_mask"][:, :, slice] .!= 0.0
+            pdff_ref = datPar["ref"][:, :, slice]
+
             sumS = sum(S)
             totS += sumS
 
@@ -146,21 +177,129 @@ function ismrm_challenge_score(
             fitpar = BM.fitPar(grePar, data, S)
 
             # do the work
-            BM.B0map!(fitpar, fitopt)
+            bm = BM.B0map!(fitpar, fitopt)
 
+            # score PHASER
             pdff = BM.fat_fraction_map(fitpar, fitopt)
-            pdff_ref = datPar["ref"][:, :, slice]
-            nW = sum(abs.(pdff[S] .- pdff_ref[S]) .>= 0.1)
-            totW += nW
-            
-            push!(d_[:slice_score], 100.0(1 - nW / sumS))
+            nW_PH = sum(abs.(pdff[S] .- pdff_ref[S]) .>= 0.1)
+            totW_PH += nW_PH
+
+            # score ML
+            fp = deepcopy(fitpar)
+            fo = deepcopy(fitopt)
+            fp.ϕ[S] .= bm.PH.Φ_ML[S]
+            pdff_ML = BM.fat_fraction_map(fp, fo)
+            nW_ML = sum(abs.(pdff_ML[S] .- pdff_ref[S]) .>= 0.1)
+            totW_ML += nW_ML
+
+            fp.ϕ[S] .= bm.PH.ϕ[1][S]
+            BM.set_num_phase_intervals(fp, fo, 0)
+            BM.local_fit!(fp, fo)
+            pdff_grad = BM.fat_fraction_map(fp, fo)
+            nW_grad = sum(abs.(pdff_grad[S] .- pdff_ref[S]) .>= 0.1)
+            totW_grad += nW_grad
+
+            push!(d_[:slice_score_ML], 100.0(1 - nW_ML / sumS))
+            push!(d_[:slice_score_grad], 100.0(1 - nW_grad / sumS))
+            push!(d_[:slice_score_PH], 100.0(1 - nW_PH / sumS))
         end
-        
-        d_[:score] = 100.0(1 - totW / totS) 
+
+        d_[:score_ML] = round(100.0(1 - totW_ML / totS), digits=1)
+        d_[:score_grad] = round(100.0(1 - totW_grad / totS), digits=1)
+        d_[:score_PH] = round(100.0(1 - totW_PH / totS), digits=1)
     end
 
     # return results
     return d
+end
+
+function export_score_table(d, data_sets, export_table)
+    # table headers
+    table_headers = Dict(
+        :set => ("Set", ""),
+        :score_PH => ("", "PH"),
+        :score_grad => ("", "grad"),
+        :score_ML => ("", "ML"),
+        :score => ("Score", ""),
+        :B0 => ("\\(B_0\\)", "[T]"),
+        :nTE => ("TEs", ""),
+        :ΔTE => ("\\(\\Delta \\mathrm{TE}\\)", "[ms]"),
+        :anatomy => ("Anatomy", ""),
+    )
+
+    table_lines = String[]
+
+    if !isempty(export_table)
+        export_table_2 = []
+        for e in export_table
+            if e == :score 
+                map(x -> push!(export_table_2, x), (:score_ML, :score_grad, :score_PH))
+            else
+                push!(export_table_2, e)
+            end
+        end
+
+        ncols = length(export_table)
+        ncols2 = length(export_table_2)
+
+        s = "\\begin{tabular}{"
+        for _ = 1:ncols2
+            s *= "|c"
+        end
+        s *= "|}"
+
+        push!(table_lines, s)
+        push!(table_lines, "\\hline")
+
+        s = ""
+        for (ie, entry) in enumerate(export_table)
+            if entry == :score
+                s *= "\\multicolumn{3}{|c|}{" * table_headers[entry][1] * "}"
+            else
+                s *= table_headers[entry][1]
+            end
+            if ie < ncols
+                s *= " & "
+            else
+                s *= " \\\\ "
+            end
+        end
+        push!(table_lines, s)
+
+        s = ""
+        for (ie, entry) in enumerate(export_table_2)
+                s *= table_headers[entry][2]
+            if ie < ncols2
+                s *= " & "
+            else
+                s *= " \\\\ "
+            end
+        end
+        push!(table_lines, s)
+
+        push!(table_lines, "\\hline")
+
+        for data_set in data_sets
+            s = ""
+
+            for (ie, entry) in enumerate(export_table_2)
+                s *= string(d[data_set][entry])
+                if ie < ncols2
+                    s *= " & "
+                else
+                    s *= " \\\\ "
+                end
+            end
+
+            push!(table_lines, s)
+        end
+
+        push!(table_lines, "\\hline")
+        push!(table_lines, "\\end{tabular}")
+    end
+
+    # return results
+    return table_lines
 end
 
 """
@@ -303,7 +442,7 @@ function phaser_plots(plots, PH, fitpar, fitopt;
 
             if plt.val == :Φ
                 n = plt.n
-                ax.title = n == 0 ? L"$\Phi$" : L"$\Phi^{(%$n)}$"
+                ax.title = n == 0 ? L"$\Phi$" : L"$\mathcal{P}\,\left[\,\Phi - \varphi^{(%$n)}\,\right]$"
                 hidedecorations!(ax)
 
                 heatmap!(ax,
@@ -373,7 +512,7 @@ function phaser_plots(plots, PH, fitpar, fitopt;
 
             if plt.val == :Φ_red
                 n = plt.n
-                ax.title = L"$\Phi^{(%$n)}$"
+                ax.title = L"$\mathcal{P}\,\left[\,\Phi - \varphi^{(%$n)}\,\right]$"
                 hidedecorations!(ax)
 
                 heatmap!(ax,
@@ -563,7 +702,7 @@ function phaser_plots(plots, PH, fitpar, fitopt;
             if plt.val == :hist_Φ
                 n = plt.n
 
-                ax.title = n == 0 ? L"$\Phi$" : L"$\Phi^{(%$n)}$"
+                ax.title = n == 0 ? L"$\Phi$" : L"$\mathcal{P}\,\left[\,\Phi - \varphi^{(%$n)}\,\right]$"
                 hideydecorations!(ax)
 
                 bins = range(-π, π, plt.bin_mode == :fixed ? plt.nbins + 1 :

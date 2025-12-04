@@ -7,9 +7,9 @@ include("ph_util.jl")
 BLAS.set_num_threads(1)
 
 # ISMRM challenge 2012 data sets:
-data_set, slice = 17, 2
-#data_set, slice = 5, 2
-#data_set, slice = 12, 2
+data_set, slice = 12, 2
+#data_set, slice = 5, 1
+#data_set, slice = 12, 1
 oi = orient_ISMRM(data_set)
 
 # 1: tibia, tra
@@ -32,16 +32,12 @@ oi = orient_ISMRM(data_set)
 
 # set PHASER parameters
 fitopt = BM.fitOpt()
-fitopt.K = [7, 7]
+fitopt.K = [6, 6]
 fitopt.redundancy = Inf
 fitopt.os_fac = [1.3]
 fitopt.balance = 5
 fitopt.rapid_balance = true
 fitopt.multi_scale = false
-
-# calculate score
-
-d = ismrm_challenge_score(fitopt; data_sets = (1:2...,4:17...));
 
 ##
 
@@ -80,18 +76,18 @@ plots = [_Φ[1] _hist_a∇Φ[1] _hist_Φ[1] _pdff[1];
 plots = [_∇Φ[1] _∇Φ_red[1];
     _ϕ[1] _a∇Φ_red[1]]
 =#
-plots = [_Φ[1] _Φ_red[1] _hist_Φ[1] _pdff[1];
-    _Φ_red[n_grad] _ϕ[n_grad] _hist_Φ[n_grad+1] _pdff[n_grad+1];
-    _Φ_red[end] _ϕ[end] _hist_Φ[end] _pdff[end]]
+plots = [_Φ[1] _hist_a∇Φ[1] _hist_Φ[1] _pdff[1];
+    _ϕ[n_grad] _Φ_red[n_grad] _hist_Φ[n_grad+1] _pdff[n_grad+1];
+    _ϕ[end] _Φ_red[end] _hist_Φ[end] _pdff[end]]
 
 
 (fig, dax, ϕ_loc, pdff) = phaser_plots(plots, cal.PH, cal.fitpar, fitopt;
-    width_per_plot=300,
-    height_per_plot=230,
+    width_per_plot=280,
+    height_per_plot=210,
     col_in=:blue, col_out=:red, alpha_out=0.3,
     font_pt=12, label_pt=10,
     slice=1,
-    j=2,
+    j=1,
     oi=oi,
     letters=true,
     ϕ_loc=ϕ_loc,
@@ -110,3 +106,18 @@ save(fig_name * ".svg", fig)
 run(`/home/cganter/bin/svg2eps $fig_name`) # just set the path which applies to you
 # generate a pdf for rapid complilation in Overleaf.
 run(`epspdf $fig_name".eps"`)
+
+##
+
+data_sets = (1:2..., 4:17...) 
+
+# calculate score
+
+d = ismrm_challenge_score(fitopt;
+    data_sets=data_sets);
+
+tabular = export_score_table(d, data_sets, (:set, :anatomy, :B0, :nTE, :ΔTE, :score))
+
+for li in tabular
+    println(li)
+end

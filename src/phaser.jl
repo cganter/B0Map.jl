@@ -140,7 +140,7 @@ function B0map!(fitpar::FitPar, fitopt::FitOpt)
     end
 
     # return results
-    (; to, PH, Φ_ML, R2s_ML, ϕ_loc, R2s_loc, S, Sj, R)
+    (; to, PH, Φ_ML, R2s_ML, ϕ_loc, R2s_loc, S, Sj, R, bs)
 end
 
 """
