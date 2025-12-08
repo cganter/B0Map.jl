@@ -4,7 +4,6 @@ using Documenter
 DocMeta.setdocmeta!(B0Map, :DocTestSetup, :(using B0Map); recursive=true)
 
 makedocs(;
-    #modules=[B0Map],
     authors="Carl Ganter <cganter@tum.de>",
     sitename="B0Map.jl",
     format=Documenter.HTML(;
@@ -14,16 +13,17 @@ makedocs(;
     ),
     pages=[
         "Home" => "index.md",
-        "Multi-echo GRE signal models" => Any[
-            "General" => "man/GREgeneral.md",
+        "Quick Start" => Any[
+            "Set up parameters" => "man/fittools.md",
+            "Local fit" => "man/localfit.md",
+            "Regularized fit" => "man/phaser.md",
+            "Get results" => "man/results.md",
+        ],
+        "Signal models" => Any[
+            "Multi-echo GRE" => "man/GREgeneral.md",
             "Unconstrained water-fat mixture" => "man/WFFW.md",
             "Real-valued water fat mixture" => "man/WFRW.md",
             "Constrained water-fat mixture" => "man/WF.md",
-        ],
-        "Data fitting" => Any[
-            "General steps" => "man/fittools.md",
-            "Local fitting" => "man/localfit.md",
-            "PHASER" => "man/phaser.md",
         ],
         "API" => Any[
             "man/api.md",

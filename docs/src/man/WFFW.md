@@ -86,3 +86,4 @@ GREMultiEchoWFFW(::ModParWFFW)
     ```math
     \frac{\left|c_{f}\right|}{\left|c_w\right| + \left|c_f\right|}
     ```
+    and returned by [`fat_fraction`](@ref fat_fraction).

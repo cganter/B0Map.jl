@@ -175,7 +175,6 @@ ax = Axis(f_χ2[1, 2],
     xticklabelsize=8pt,
 )
 
-#heatmap!(ax, ϕs, R2ss, χ2_FC, colormap=colmap, colorrange=lim)
 heatmap!(ax, ϕs, R2ss, laχ2_FC, colormap=colmap, colorrange=lim)
 scatter!(ax, xs, ys, markersize = 2, color=:red)
 scatter!(ax, 0.0, R2ss_t, color=:lime)

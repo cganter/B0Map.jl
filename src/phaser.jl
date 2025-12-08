@@ -1,6 +1,6 @@
 using LinearAlgebra, LinearSolve, ChunkSplitters, StatsBase, Optim, Random, TimerOutputs, SavitzkyGolay, Compat
 import VP4Optim as VP
-@compat public BSmooth, calc, phase_map, phaser, smooth_projection!
+@compat public BSmooth, Nfree, phase_map, B0map!  
 
 """
     BSmooth{N}
@@ -9,8 +9,6 @@ Supertype of smooth bases.
 
 ## Type parameter
 - `N::Int`: Subspace dimensions
-## Remark
-- `N` does not necessarily equal the dimension of the data set. Specifically, `N == 2` makes sense for multi-slice data, if there are not enough slices for reasonable interpolation in that direction.
 """
 abstract type BSmooth{N} end
 
@@ -32,9 +30,13 @@ no generic implementation is provided.
 function ∇Bt∇B_∇Bty(::BSmooth, ::AbstractVector, ::AbstractVector) end
 
 """
-    phase_map(bs::BSmooth, b::Float64, c::AbstractVector)
+    phase_map(bs::BSmooth, b::Float64, c::AbstractVector, to::TimerOutput=TimerOutput())
 
 Returns the phase map `φ = b + B' * c`.
+
+## Remark
+
+Auxiliary routine
 """
 function phase_map(bs::BSmooth, b::Float64, c::AbstractVector, to::TimerOutput=TimerOutput())
     b .+ phase_map(bs, c, to)
@@ -53,9 +55,9 @@ no generic implementation is provided.
 function phase_map(::BSmooth, ::AbstractVector) end
 
 """
-    B0map!(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
+    B0map!(fitpar::FitPar, fitopt::FitOpt)
 
-TBW
+Calculate regularized phase map.
 """
 function B0map!(fitpar::FitPar, fitopt::FitOpt)
     # timing will always be monitored
@@ -215,7 +217,11 @@ end
 """
     subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}) where {N}
 
-TBW
+Generate subsampling masks.
+
+## Remark
+
+Auxiliary routine
 """
 function subsample_mask(fitpar::FitPar, fitopt::FitOpt, bs::BSmooth{N}, to::TimerOutput) where {N}
     @timeit to "generate subsampling masks" begin
@@ -410,7 +416,11 @@ end
 """
     remove_local_outliers!(T, Φ, msk, info, to)
 
-TBW
+Remove local outliers.
+
+## Remark
+
+Auxiliary routine
 """
 function remove_local_outliers!(T, S, Φ, info, to)
     @timeit to "remove local outliers" begin
@@ -471,7 +481,11 @@ end
 """
     gradient_based_estimate!(ϕ, Tj, S, R, ∇Φ, Φ, μ, bs, info, to)
 
-TBW
+Calculate gradient-based estimate.
+
+## Remark
+
+Auxiliary routine
 """
 function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, bs, info, to)
     @timeit to "gradient-based estimate" begin
@@ -513,7 +527,11 @@ end
 """
     balanced_estimate!(ϕ, T, Tj, S, R, Φ, ∇Φ, fitpar, fitopt, bs, info, to)
 
-TBW
+Calculate balanced estimate.
+
+## Remark
+
+Auxiliary routine
 """
 function balanced_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs::BSmooth{N}, info, to) where {N}
     @timeit to "balanced estimate" begin
@@ -589,14 +607,19 @@ end
 """
     calc_phase_offset!(ϕ, Φ, S, R)
 
-TBW
+Shift `ϕ` globally such that optimal consistency with the given ML estimate `Φ`
+on `S` is obtained and the median on `R` lies in the interval `[-π, π)`
+
+## Remark
+
+Auxiliary routine
 """
 function calc_phase_offset!(ϕ, Φ, S, R)
     # coefficient b
     b = @views angle(sum(exp.(im .* (Φ[S] .- ϕ[S]))))
 
     # calculate the median of ϕ over S
-    ϕ_med = @views median(ϕ[S]) + b
+    ϕ_med = @views median(ϕ[R]) + b
 
     # limit the median phase to [-π,π)
     while ϕ_med >= π
@@ -616,13 +639,18 @@ function calc_phase_offset!(ϕ, Φ, S, R)
 end
 
 """
-    median_shift!(ϕ, S)
+    median_shift!(ϕ, R)
 
-TBW
+Shift phase `ϕ` by multiples of `2π`, such that the median over `R` lies in the 
+interval `[-π, π)`.
+
+## Remark
+
+Auxiliary routine
 """
-function median_shift!(ϕ, S)
-    # calculate the median of ϕ over S
-    ϕ_med = @views median(ϕ[S])
+function median_shift!(ϕ, R)
+    # calculate the median of ϕ over R
+    ϕ_med = @views median(ϕ[R])
     b = 0.0
 
     # limit the median phase to [-π,π)
@@ -637,7 +665,7 @@ function median_shift!(ϕ, S)
     end
 
     # add offset to ϕ
-    @. ϕ[S] += b
+    @. ϕ[R] += b
 
     nothing
 end

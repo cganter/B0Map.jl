@@ -104,11 +104,11 @@ function SimPhaPar()
     f_nSinc = 5
     coils_nSinc = 2
     # zero crossings of sincs over FOV
-    S_zc = 4.0
-    ϕ_zc = 5.0
-    R2s_zc = 7.0
-    f_zc = 7.0
-    coils_zc = 3.0
+    S_zc = 2.0
+    ϕ_zc = 2.0
+    R2s_zc = 2.0
+    f_zc = 2.0
+    coils_zc = 2.0
     # fraction of voids in ROI
     S_holes = 0.7
     # use voids (:out) or not (:in)
@@ -386,7 +386,7 @@ function simulate_phantom(spp::SimPhaPar)
     bs = BM.fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
 
     # apply PHASER
-    bm = BM.B0map!(fitpar, fitopt, bs)    
+    bm = BM.B0map!(fitpar, fitopt)    
 
     # ------------ preparing results ------------
 

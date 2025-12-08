@@ -12,3 +12,5 @@ scratch.jl
 /docs/Manifest.toml
 /docs/build/
 /test/wip/
+/test/varpro_paper/
+/test/phaser_paper/

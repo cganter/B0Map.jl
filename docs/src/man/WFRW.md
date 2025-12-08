@@ -93,6 +93,7 @@ GREMultiEchoWFRW(::ModParWFRW)
     ```math
     \frac{\left|r_{f}\right|}{\left|r_w\right| + \left|r_f\right|}
     ```
+    and returned by [`fat_fraction`](@ref fat_fraction).
     
 ```@docs
 coil_phase

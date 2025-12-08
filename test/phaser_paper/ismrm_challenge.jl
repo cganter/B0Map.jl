@@ -65,17 +65,6 @@ _hist_ϕ_Φ = [(val=:hist_ϕ_Φ, n=n, nbins=100, bin_mode=:fixed) for n in 1:n_m
 _hist_a∇Φ = [(val=:hist_a∇Φ, n=n, nbins=50, bin_mode=:fixed) for n in 0:n_max]
 _χ2λ = [(val=:χ2λ, n=n) for n in 1:n_bal]
 
-#=
-plots = [_hist_Φ[9] _ϕ[1] _ϕ[2] _ϕ[3];
-        _hist_Φ[end] _ϕ_loc[end] _pdff[end] _ϕ[end]]
-
-plots = [_Φ[1] _hist_a∇Φ[1] _hist_Φ[1] _pdff[1];
-    _Φ_red[n_grad] _ϕ[n_grad] _hist_Φ[n_grad+1] _pdff[n_grad+1];
-    _Φ_red[end] _ϕ[end] _hist_Φ[end] _pdff[end]]
-
-plots = [_∇Φ[1] _∇Φ_red[1];
-    _ϕ[1] _a∇Φ_red[1]]
-=#
 plots = [_Φ[1] _hist_a∇Φ[1] _hist_Φ[1] _pdff[1];
     _ϕ[n_grad] _Φ_red[n_grad] _hist_Φ[n_grad+1] _pdff[n_grad+1];
     _ϕ[end] _Φ_red[end] _hist_Φ[end] _pdff[end]]
@@ -106,18 +95,3 @@ save(fig_name * ".svg", fig)
 run(`/home/cganter/bin/svg2eps $fig_name`) # just set the path which applies to you
 # generate a pdf for rapid complilation in Overleaf.
 run(`epspdf $fig_name".eps"`)
-
-##
-
-data_sets = (1:2..., 4:17...) 
-
-# calculate score
-
-d = ismrm_challenge_score(fitopt;
-    data_sets=data_sets);
-
-tabular = export_score_table(d, data_sets, (:set, :anatomy, :B0, :nTE, :ΔTE, :score))
-
-for li in tabular
-    println(li)
-end

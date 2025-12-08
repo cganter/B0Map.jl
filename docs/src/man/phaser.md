@@ -2,24 +2,12 @@
 CurrentModule = B0Map
 ```
 
-# PHASER
+# Regularized fit
 
-## Smooth basis
+Regularized ``B_0`` mapping relies on PHASER, as described in [link follows].
 
-```@docs
-BSmooth{N}
-BFourierLin
-fourier_lin
-Nρ
-Nρ_orig
-Nκ
-phase_map(bs::BSmooth, b::Float64, c::AbstractVector)
-phase_map(::BSmooth, ::AbstractVector)
-```
-
-## Regularized phase map
+## Method
 
 ```@docs
-phaser
-smooth_projection!
+B0map!
 ```

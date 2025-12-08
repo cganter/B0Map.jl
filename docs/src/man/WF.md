@@ -4,6 +4,8 @@ CurrentModule = B0Map
 
 # Constrained water-fat mixture
 
+See [link to follow] for a more in-depth description.
+
 ## Description
 
 We consider a set of `Ny = Nt * Nc` complex local RF-spoiled multi-echo GRE signals ``y_{j\gamma}`` 
@@ -122,7 +124,7 @@ GREMultiEchoWF(::ModParWF)
     - The `data` argument must be ordered such that the expression `SMatrix{Nt,Nc}(data)` produces the correct data matrix ``y_{j\gamma}``.
 
 !!! note
-    The fat fraction is simply given by ``f(\omega, R_2^\ast)``.
+    The fat fraction is simply given by ``f(\omega, R_2^\ast)`` and returned by [`fat_fraction`](@ref fat_fraction).
 
 ```@docs
 coil_sensitivities

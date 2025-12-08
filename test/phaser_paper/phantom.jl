@@ -7,22 +7,23 @@ include("ph_util.jl")
 
 spp = SimPhaPar()
 
-spp.TEs = 1.15 * [1, 2, 3]
+spp.TEs = 1.15 * [1, 2, 3, 4]
 spp.B0 = 1.5
 spp.freq_rng = [-2, 2]
 spp.Nρ = [256, 256]
-spp.K = [2, 2]
+spp.K = [3, 3]
 spp.local_fit = false
-spp.S_holes = 0.5
-spp.S_io = :out
-spp.cov_mat = 0.05^2 * [1;;]
+spp.S_holes = 0.25
+spp.S_io = :in
+#spp.cov_mat = 0.05^2 * [1;;]
 spp.subsampling = :fibonacci
 spp.balance = 2
-spp.add_noise = true
+spp.add_noise = false
 spp.os_fac = [1.3]
-spp.ppm_fat_pha = spp.ppm_fat .- 0.1
+spp.ppm_fat_pha = spp.ppm_fat #.- 0.1
 spp.rng = MersenneTwister(42)
 spp.redundancy = Inf
+
 sim = simulate_phantom(spp);
 
 ϕ_loc = pdff = nothing
@@ -41,7 +42,7 @@ _hist_a∇Φ = [(val=:hist_a∇Φ, n=n, nbins=50, bin_mode=:fixed) for n in 0:n_
 
 plots = [_Φ[1] _ϕ[1] _ϕ[2] _ϕ[end];
          _hist_a∇Φ[1] _Φ_red[1] _Φ_red[2] _Φ_red[end];
-         _hist_Φ[1] _hist_Φ[2] _hist_Φ[3] _hist_Φ[end];
+         _hist_a∇Φ[2] _hist_Φ[2] _hist_Φ[3] _hist_Φ[end];
          _pdff[1] _pdff[2] _pdff[3] _pdff[end]]
 
 (fig, dax, ϕ_loc, pdff) = phaser_plots(plots, sim.PH, sim.fitpar, sim.fitopt;

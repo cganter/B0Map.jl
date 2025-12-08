@@ -65,7 +65,6 @@ fitpar_RW = BM.fitPar(grePar_RW, deepcopy(data_), deepcopy(S_))
 fitopt = BM.fitOpt()
 fitopt.R2s_rng = [0.0, 0.0]
 fitopt.optim = false # not needed, since R2s = 0 is fixed
-fitopt.diagnostics = true
 
 fitopt_FC = deepcopy(fitopt)
 fitopt_RW = deepcopy(fitopt)

@@ -7,7 +7,6 @@ Data structure for fitting images.
 
 ## Content
 - `grePar::VP4Optim.ModPar{AbstractGREMultiEcho}`: Specifics of the GRE acquisition and signal/tissue model
-- `args::Tuple`: Arguments used to construct `gre` (not including keyword arguments)
 - `data::Array`: Complex data
 - `S::Array`: Mask to specify ROI
 - `ϕ::Array`: Phase ``\\phi = \\omega \\cdot \\Delta t`` (fit parameter)
@@ -15,7 +14,7 @@ Data structure for fitting images.
 - `c::Array`: Array of linear VARPRO coefficient vectors ``\\bm{c}(\\phi, R_2^\\ast)``
 - `χ2::Array`: Least squares residual ``\\chi^2``
 ## Scope
-- Local and non-local (regularized) fitting
+- Local and regularized fit
 """
 struct FitPar{T<:AbstractGREMultiEcho}
     # common part (local fit and PHASER)
@@ -29,12 +28,12 @@ struct FitPar{T<:AbstractGREMultiEcho}
 end
 
 """
-    fitPar(grePar::VP.ModPar{M}, data::AbstractArray, S::AbstractArray) where {Ny,Nx,Nc,T,M <: AbstractGREMultiEcho{Ny,Nx,Nc,T}}
+    fitPar(grePar::VP.ModPar{T}, data::AbstractArray, S::AbstractArray) where {T <: AbstractGREMultiEcho}
 
 Constructor for [FitPar](@ref FitPar)
 
 ## Arguments
-- `gre::AbstractGREMultiEcho`: Initialized structure with GRE sequence parameters and signal/tissue model.
+- `grePar::VP4Optim.ModPar{AbstractGREMultiEcho}`: Specifics of the GRE acquisition and signal/tissue model
 - `data::AbstractArray`: Complex multi-echo (if available also multi-coil) GRE data for each location.
 - `S::AbstractArray`: Mask to specify ROI.
 ## Remarks
@@ -43,6 +42,46 @@ Constructor for [FitPar](@ref FitPar)
 - The format of `data` must be such that `VP4Optim.setdata!(gre, reshape(data, size(S)..., :)[ci,:])` works for any `ci ∈ CartesianIndices(S)`
 - For single-coil images, this means `ndims(data) == ndims(S) + 1` with the last index enumerating the echoes.
 - For multi-coil data, we typically have `ndims(data) == ndims(S) + 2` with the last but one index enumerating echo times and the last index enumerating the coils.
+## Example
+```julia
+import VP4Optim as VP
+import B0Map as BM
+
+# Mandatory acquisition parameters
+nTE = 6                             # number of echoes
+t0 = 0.5                            # first echo time [ms]
+ΔTE = 1.0                           # echo spacing [ms]
+TEs = [range(t0, t0 + (nTE-1) * ΔTE, nTE);]  # resulting echo times
+B0 = 3.0                            # scanner field strength [T]
+precession = :counterclockwise      # orientation of precession (depends on the scanner)
+
+# Optional parameters
+n_coils = 6                         # number of coils (if reconstructed separately)
+cov_mat = get_cov_mat(...)          # coil covariance matrix (if available)
+
+# Define water-fat tissue model (we only need to specify the fat component)
+ppm_fat = [-3.80, -3.40, -2.60, -1.94, -0.39, 0.60]
+ampl_fat = [0.087, 0.693, 0.128, 0.004, 0.039, 0.048]
+
+# set up model constructor parameters
+grePar = VP.modpar(BM.ModParWF;
+    ts = TEs,                       # required
+    B0 = B0,                        # required
+    ppm_fat = ppm_fat,              # required
+    ampl_fat = ampl_fat,            # required
+    precession = precession,        # required
+    n_coils = n_coils,              # optional (if ≠ 1)
+    cov_mat = cov_mat,              # optional (if of relevance)
+    )
+    
+# Prepare data and ROI
+# (For the required dimensions, see the docs of the constructor fitPar().)
+data = get_from_somewhere(...)
+S = define_ROI_somehow(data, ...)
+
+# create an instance of FitPar
+fitpar = BM.fitPar(grePar, data, S) 
+```
 """
 function fitPar(grePar::VP.ModPar{T}, data::AbstractArray, S::AbstractArray) where {T <: AbstractGREMultiEcho}
     szS = size(S)
@@ -70,7 +109,6 @@ Data structure holding the fit parameters.
 - `R2s_rng::Array`: Search range for `R2s`.
 - `ϕ_acc::Float64`: Required GSS accuracy for `ϕ_acc`
 - `R2s_acc::Float64`: Required GSS accuracy for `R2s_acc`
-- `local_fit::Bool`: Perform a final local fit, based upon PHASER.
 ## Local Fit only
 - `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
 - `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
@@ -85,9 +123,10 @@ Data structure holding the fit parameters.
 - `redundancy::Float64`: 
 - `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
 - `optim_balance::Bool`: Optimization during balancing of local and gradient fit
+- `local_fit::Bool`: Perform a final local fit, based upon PHASER.
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
-- `accel::Symbol`: Which acceleration technique should be used. Supported values are `:mt` (multi-threading) and `:cuda` (GPU).
+- `accel::Symbol`: Which acceleration technique should be used. Supported values are `:mt` (multi-threading). (`:cuda` not implemented yet)
 ## Remark
 - Use [`set_num_phase_intervals`](@ref set_num_phase_intervals) to modify `n_ϕ`, since only then `ϕ_rngs` will be set properly.
 """
@@ -98,7 +137,6 @@ mutable struct FitOpt
     R2s_rng::Vector{Float64}
     ϕ_acc::Float64
     R2s_acc::Float64
-    local_fit::Bool
     optim::Bool
     optim_phaser::Bool
     autodiff::Symbol
@@ -111,6 +149,7 @@ mutable struct FitOpt
     redundancy::Float64
     subsampling::Symbol
     optim_balance::Bool
+    local_fit::Bool
     n_chunks::Int
     rng::MersenneTwister
     accel::Symbol
@@ -120,6 +159,23 @@ end
     fitOpt(ϕ_scale = 1.0)
 
 Default constructor for [FitOpt](@ref FitOpt)
+
+## Argument
+- `ϕ_scale::Float64`: See [`set_num_phase_intervals`](@ref set_num_phase_intervals)
+## Remark
+Typical use case:
+- Generate instance of `FitOpt` with this constructor.
+- Modify parameters as needed.
+## Example
+```julia
+# generate FitOpt instance with default options
+fitopt = BM.fitOpt()
+
+# modify whatever we like to modify
+BM.set_num_phase_intervals(fitpar, fitopt, 4)
+fitopt.ϕ_acc = 1.e-6
+...
+```
 """
 function fitOpt(ϕ_scale = 1.0)
     n_ϕ = 4
@@ -128,7 +184,6 @@ function fitOpt(ϕ_scale = 1.0)
     R2s_rng = [0.0, 1.0]
     ϕ_acc = 1.e-4
     R2s_acc = 1.e-4
-    local_fit = true
     optim = true
     optim_phaser = true
     autodiff = :finite
@@ -136,25 +191,26 @@ function fitOpt(ϕ_scale = 1.0)
     rapid_balance = true
     μ_tikh = 1.e-6
     K = []
-    multi_scale = true
+    multi_scale = false
     os_fac = [1.3]
     redundancy = Inf
     subsampling = :fibonacci
     optim_balance = false
+    local_fit = true
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
     accel = :mt
-    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, local_fit, optim, optim_phaser, autodiff, 
+    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, optim, optim_phaser, autodiff, 
             balance, rapid_balance, μ_tikh, K, multi_scale,
             os_fac, redundancy, subsampling, 
-            optim_balance,
+            optim_balance, local_fit, 
             n_chunks, rng, accel)
 end
 
 """
     phase_search_intervals(n_ϕ, ϕ_scale = 1.0)
 
-Calulates the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
+Calulate the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`).
 
 ## Arguments
 - `n_ϕ::Int`: number of golden section search (GSS) intervals
@@ -179,14 +235,16 @@ end
 """
     set_num_phase_intervals(fitpar, fitopt, n_ϕ)
 
-Sets the GSS intervals for the initial `ϕ` search (with `R2s == 0.0`)
+Define, how to search minimum of `χ²`.
     
 ## Arguments
 - `fitpar::FitPar`: Fit parameters
 - `fitopt::FitOpt`: Fit options
 - `n_ϕ`: Number of search intervals
-## Remarks
-- Resets field `n_ϕ` in `fitopt` and then calls [`phase_search_intervals`](@ref phase_search_intervals).
+
+## Remark
+- `n_ϕ > 0`: Split `[-π, π)` into `n_ϕ` subintervals and store them in `fitopt.ϕ_rngs`.
+- `n_ϕ == 0`: Clear `fitopt.ϕ_rngs` for a nonlinear search, starting from `fitpar.ϕ`
 """
 function set_num_phase_intervals(fitpar, fitopt, n_ϕ)
     fitopt.n_ϕ = n_ϕ
@@ -204,6 +262,11 @@ Extract model specific information and store it in array `res`.
 - `fitopt::FitOpt`: Fit options
 - `parfun::Function`: Used to call `parfun(gre::T)` for each location in `fitpar.S`, based upon the local data and fit estimates. 
 - `res::AbstractArray`: Allocated space for the results (`size(res) == size(fitpar.S)`).
+## Example
+```julia
+ff = zeros(size(fitpar.S))                          # allocate space for the results
+BM.calc_par(fitpar, fitopt, BM.fat_fraction, ff)    # do the job
+```
 """
 function calc_par(fitpar::FitPar{T}, fitopt::FitOpt, parfun::Function, res::AbstractArray) where {T<:AbstractGREMultiEcho}
     # a return value for diagnostics 
@@ -272,6 +335,10 @@ Return the fat fraction map.
 - `size(returned map) == size(fitpar.S)`
 - Avoids the necessity to allocate space.
 - Relies on [`calc_par`](@ref calc_par).
+## Example
+```julia
+ff = BM.fat_fraction_map(fitpar, fitopt)
+```
 """
 function fat_fraction_map(fitpar, fitopt)
     ff = zeros(size(fitpar.S))
@@ -289,6 +356,10 @@ Return the frequency map [Hz].
 ## Remarks
 - `size(returned map) == size(fitpar.S)`
 - Simply rescales the phase map `fitpar.ϕ` instead of calling [`calc_par`](@ref calc_par).
+## Example
+```julia
+fm = BM.freq_map(fitpar)
+```
 """
 function freq_map(fitpar)
     gre = VP.create_model(fitpar.grePar)

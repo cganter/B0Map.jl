@@ -68,7 +68,6 @@ R2s_FC[not_S] .= NaN
 inch = 96
 pt = 4 / 3
 
-#width, height = 6.9inch, 4.6inch
 width, height = 6.9inch, 6.9inch
 colmapO = :romaO
 

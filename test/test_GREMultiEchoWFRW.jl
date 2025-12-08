@@ -63,7 +63,7 @@ for precession in (:counterclockwise, :clockwise)
     gre_fw = VP.create_model(pars_)
     
     iΔTE = 1im / ΔTE
-    fac = im * 2π * 0.042577 * B0
+    local fac = im * 2π * 0.042577 * B0
     precession == :clockwise && (iΔTE = - iΔTE; fac = - fac)
     w = sum(ampl_fat' .* exp.(fac * ppm_fat' .* TEs), dims=2)
     e = exp.((iΔTE * x[1] - x[2]) .* TEs)

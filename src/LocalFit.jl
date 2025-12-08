@@ -12,10 +12,16 @@ Fit data to multi-echo GRE model locally.
 - `fitopt::FitOpt`: Fit options (see [FitOpt](@ref FitOpt))
 ## Remarks
 - Fits `fitpar.data` to all points specified by `fitpar.S`.
-- If `isempty(fitopt.ϕ_rngs) == true`, the GSS fit is only with respect to `R2s`, based upon the local phase, specified in `fitpar.ϕ`.
-- Otherwise, for each interval in `fitopt.ϕ_rngs` a GSS search with respect to `ϕ` is performed, each time for `R2s == 0`. For each of these phases fixed, a subsequent GSS search with respect to `R2s` is performed. The combination `[ϕ, R2s]`, which produces the best fit is selected.
-- Optionally (`fitopt.optim == true`), for the best GSS estimate `[ϕ, R2s]` is refined with a nonlinear fit.
+- After calling `set_num_phase_intervals(fitopt, 0)`, the golden section search (GSS) fit is only done with respect to `R2s`, based upon the local phase, specified in `fitpar.ϕ`.
+- After calling `set_num_phase_intervals(fitopt, n_ϕ)`, a GSS search with respect to `ϕ` (for fixed `R2s == 0`) is performed for all `n_ϕ` equally sized subintervals. For each of these optimal phases fixed, a subsequent GSS search with respect to `R2s` follows. The combination `[ϕ, R2s]`, which produces the best fit is selected.
+- If `fitopt.optim == true`, the best GSS estimate `[ϕ, R2s]` is refined by a nonlinear fitting.
 - The final estimates `[ϕ, R2s]` are stored in `fitpar`, together with the linear coefficients `VP4Optim.c` and the goodness of fit `VP4Optim.χ2`.
+## Example
+After setting up fitpar and fitopt, as described in [Set up parameters](@ref):
+```julia
+# call local fit routine
+BM.local_fit!(fitpar, fitopt)
+```
 """
 function local_fit!(fitpar::FitPar{T}, fitopt::FitOpt) where {T<:AbstractGREMultiEcho}
     if fitopt.accel == :mt
@@ -199,15 +205,26 @@ end
 Search for minimum of given function `fun` with golden section search (GSS).
 
 # Arguments
-- `fun::Function`: real valued function of a single real valued argument.
+- `fun::Function`: real valued function of a single real valued argument. (Can be a closure.)
 - `var_rng::T <: Union{Vector, Tuple}`: search interval boundaries, `length(var_rng) == 2`
 - `acc::Float64`: Required accuracy of *location*.
 - `show_all::Bool`: Also return visited locations and their values (default: `false`)
 
 # Output
-- `show_all ? ((x_opt, fun(x_opt)), xs, fs) : (x_opt, fun(x_opt))`, where
+- `show_all ? (x_opt, fun(x_opt), xs, fs) : (x_opt, fun(x_opt))`, where
 - `x_opt` is the location of the minimum with value `fun(x_opt)`
-- `xs::Vector{Float64}` is the vector of all tested locations and `fs = map(x -> fun(x), xs)`
+- `xs::Vector{Float64}` is the (sorted) vector of all tested locations and `fs = map(x -> fun(x), xs)`
+
+# Example
+```julia
+x_min, f_min = 1, 2
+f = x -> (x - x_min)^2 + f_min
+
+x_opt, f_opt, xs, fs = BM.GSS(f, [0,2], 1e-6; show_all=true)
+
+# x_opt should be close to x_min and f_opt close to f_min.
+# the tested (location, value) pairs can be displayed with lines(xs, fs), for example.
+```
 """
 function GSS(fun::Function, var_rng, acc; show_all=false)
     # the (absolute) accuracy must be positive

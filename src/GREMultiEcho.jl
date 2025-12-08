@@ -1,4 +1,6 @@
+using Compat
 import VP4Optim as VP
+@compat public AbstractGREMultiEcho, nTE, Δt, fat_fraction, max_derivative
 
 """
     AbstractGREMultiEcho{Ny,Nx,Nc,T} <: VP4Optim.Model{Ny,Nx,Nc,T}
@@ -23,7 +25,11 @@ function nTE(::AbstractGREMultiEcho) end
 """
     Δt(gre::T) where T <: AbstractGREMultiEcho
 
-Return the effective echo spacing `Δt`.
+Return the echo spacing `Δt`.
+
+## Remark
+
+Defaults to the mean echo spacing for non-equidistant sampling.
 """
 function Δt(gre::T) where T <: AbstractGREMultiEcho
     @assert hasfield(T, :Δt)
@@ -33,7 +39,7 @@ end
 """
     fat_fraction(::AbstractGREMultiEcho)
 
-Calculate and return the fat fraction.
+Calculate and return the fat fraction. (if applicable)
 
 ## Remark
 - The precise implementation depends on the concrete subtype of `AbstractGREMultiEcho`.
