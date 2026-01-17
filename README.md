@@ -1,6 +1,6 @@
 # B0Map
 
-*Tools for rapid B0-mapping in quantitative magnetic resonance imaging (qMRI).*
+*A Julia package for rapid B0-mapping in MRI.*
 
 [![Stable](https://img.shields.io/badge/docs-stable-blue.svg)](https://cganter.github.io/B0Map.jl/stable/)
 [![Dev](https://img.shields.io/badge/docs-dev-blue.svg)](https://cganter.github.io/B0Map.jl/dev/)

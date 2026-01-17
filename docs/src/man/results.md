@@ -7,7 +7,7 @@ CurrentModule = B0Map
 
 !!! note
     Estimators, calculated by [`local_fit!`](@ref local_fit!) 
-    or [`B0map!`](@ref B0map!), are stored in the supplied structure of type [`FitPar`](@ref FitPar).
+    are stored in the supplied structure of type [`FitPar`](@ref FitPar).
 
 ## Derived quantities
 

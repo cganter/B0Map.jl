@@ -3,11 +3,11 @@ module B0Map
 include("GREMultiEcho.jl")
 include("GREMultiEchoWFFW.jl")
 include("GREMultiEchoWFRW.jl")
-include("GREMultiEchoWF.jl")
+#include("GREMultiEchoWF.jl")
 # search for best local fit
 include("FitTools.jl")
 include("LocalFit.jl")
 # PHASER
-include("phaser.jl")
-include("BFourierLin.jl")
+#include("phaser.jl")
+#include("BFourierLin.jl")
 end
