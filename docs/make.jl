@@ -31,7 +31,7 @@ makedocs(;
     ],
 )
 
-#deploydocs(;
-#    repo="github.com/cganter/B0Map.jl",
-#    devbranch="main",
-#)
+deploydocs(;
+    repo="github.com/cganter/B0Map.jl",
+    devbranch="main",
+)
