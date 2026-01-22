@@ -116,7 +116,7 @@ function local_fit_chunk(gre, fitpar, fitopt, cis_chunk, full_optim)
 
                 # search for optimum
                 if max_derivative(gre[2]) > 0
-                    res = optimize(Optim.only_fg!(VP.fg!(gre[2])), lx, ux, x0, Fminbox(LBFGS()))
+                    res = optimize(Optim.NLSolversBase.only_fg!(VP.fg!(gre[2])), lx, ux, x0, Fminbox(LBFGS()))
                 else
                     res = optimize(VP.f(gre[2]), lx, ux, x0, Fminbox(LBFGS()); autodiff=fitopt.autodiff)
                 end
@@ -135,7 +135,7 @@ function local_fit_chunk(gre, fitpar, fitopt, cis_chunk, full_optim)
 
                 # search for optimum
                 if max_derivative(gre[1]) > 0
-                    res = optimize(Optim.only_fg!(VP.fg!(gre[1])), lx, ux, x0, Fminbox(LBFGS()))
+                    res = optimize(Optim.NLSolversBase.only_fg!(VP.fg!(gre[1])), lx, ux, x0, Fminbox(LBFGS()))
                 else
                     res = optimize(VP.f(gre[1]), lx, ux, x0, Fminbox(LBFGS()); autodiff=fitopt.autodiff)
                 end
