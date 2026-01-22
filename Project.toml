@@ -1,6 +1,6 @@
 name = "B0Map"
 uuid = "26d27508-09c5-44d0-86be-f4e37b03a7e6"
-version = "0.1.0"
+version = "0.1.1"
 authors = ["Carl Ganter <cganter@tum.de>"]
 
 [deps]

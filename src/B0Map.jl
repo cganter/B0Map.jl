@@ -3,7 +3,7 @@ module B0Map
 include("GREMultiEcho.jl")
 include("GREMultiEchoWFFW.jl")
 include("GREMultiEchoWFRW.jl")
-#include("GREMultiEchoWF.jl")
+include("GREMultiEchoWF.jl")
 # local fit
 include("FitTools.jl")
 include("LocalFit.jl")

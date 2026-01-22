@@ -12,6 +12,6 @@ end;
     include("test_GREMultiEchoWFRW.jl")
 end;
 
-#@testset "GREMultiEchoWF.jl" begin
-#    include("test_GREMultiEchoWF.jl")
-#end;
+@testset "GREMultiEchoWF.jl" begin
+    include("test_GREMultiEchoWF.jl")
+end;
