@@ -2,7 +2,7 @@ using Test
 
 #@testset "BFourierLin.jl" begin
 #    include("test_BFourierLin.jl")
-#end
+#end;
 
 @testset "GREMultiEchoWFFW.jl" begin
     include("test_GREMultiEchoWFFW.jl")
