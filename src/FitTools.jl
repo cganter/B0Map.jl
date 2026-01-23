@@ -1,5 +1,5 @@
 import VP4Optim as VP
-using ChunkSplitters, TimerOutputs, Random, StatsBase, Compat
+using ChunkSplitters, TimerOutputs, Random, StatsBase, Compat, ADTypes
 @compat public FitPar, fitPar, FitOpt, fitOpt, set_num_phase_intervals, calc_par
 
 """
