@@ -47,7 +47,7 @@ what = (:consistency, :derivatives, :optimization)
 visual = false
 
 # defined random numbers
-rng = MersenneTwister(42)
+rng = MersenneTwister(1)
 
 # include Hessian in derivative test
 Hessian = true

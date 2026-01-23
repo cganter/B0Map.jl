@@ -111,7 +111,7 @@ Data structure holding the fit parameters.
 - `R2s_acc::Float64`: Required GSS accuracy for `R2s_acc`
 ## Local Fit only
 - `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
-- `autodiff::Symbol`: If `autodiff == :forward`, then automatic differentiation is used.
+- `autodiff::ADTypes.AbstractADType`: If `autodiff == ADTypes.AutoForwardDiff()`, then automatic differentiation is used.
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
 - `balance`: Max. number of data-based balancing
@@ -139,7 +139,7 @@ mutable struct FitOpt
     R2s_acc::Float64
     optim::Bool
     optim_phaser::Bool
-    autodiff::Symbol
+    autodiff::ADTypes.AbstractADType
     balance::Int
     rapid_balance::Bool
     μ_tikh::Float64
@@ -186,7 +186,7 @@ function fitOpt(ϕ_scale = 1.0)
     R2s_acc = 1.e-4
     optim = true
     optim_phaser = true
-    autodiff = :finite
+    autodiff = ADTypes.AutoForwardDiff()
     balance = 3
     rapid_balance = true
     μ_tikh = 1.e-6

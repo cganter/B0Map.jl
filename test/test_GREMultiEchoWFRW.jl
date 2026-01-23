@@ -38,7 +38,7 @@ x_scale = [2π, 1.0]
 f = 0.5
 
 # defined random numbers
-rng = MersenneTwister(42)
+rng = MersenneTwister(1)
 
 # linear coefficients
 c = SVector{2, Float64}([1 - f, f])
