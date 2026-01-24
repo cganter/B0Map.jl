@@ -24,8 +24,8 @@ pars = VP.modpar(BM.GREMultiEchoWFRW;
 # true values for :ϕ, :R2s
 x = [0.5, 0.05]
 
-# starting value for optimization
-x0 = [0.0, 0.01]
+# starting value for optimizatio
+x0 = [0.48, 0.052]
 
 # optimization constraints
 lx = [-π, 0.0]
@@ -38,7 +38,7 @@ x_scale = [2π, 1.0]
 f = 0.5
 
 # defined random numbers
-rng = MersenneTwister(1)
+rng = MersenneTwister(42)
 
 # linear coefficients
 c = SVector{2, Float64}([1 - f, f])

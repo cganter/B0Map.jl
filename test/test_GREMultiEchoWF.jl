@@ -28,7 +28,7 @@ pars = VP.modpar(BM.GREMultiEchoWF;
 x_mf = [0.5, 0.05, 0.5]
 
 # starting value for optimization
-x0_mf = [0.0, 1e-5, 1e-5]
+x0_mf = [0.48, 0.052, 0.52]
 
 # optimization constraints
 lx_mf = [-π, 0.0, 0.0]
@@ -51,7 +51,7 @@ what = (:consistency, :derivatives, :optimization)
 visual = false
 
 # defined random numbers
-rng = MersenneTwister(1)
+rng = MersenneTwister(42)
 
 # include Hessian in derivative test
 Hessian = true
