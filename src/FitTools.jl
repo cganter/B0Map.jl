@@ -1,5 +1,5 @@
 import VP4Optim as VP
-using ChunkSplitters, TimerOutputs, Random, StatsBase, Compat, ADTypes
+using ChunkSplitters, TimerOutputs, Random, StatsBase, Compat
 @compat public FitPar, fitPar, FitOpt, fitOpt, set_num_phase_intervals, calc_par
 
 """
@@ -111,7 +111,6 @@ Data structure holding the fit parameters.
 - `R2s_acc::Float64`: Required GSS accuracy for `R2s_acc`
 ## Local Fit only
 - `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
-- `autodiff::ADTypes.AbstractADType`: If `autodiff == ADTypes.AutoForwardDiff()`, then automatic differentiation is used.
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
 - `balance`: Max. number of data-based balancing
@@ -139,7 +138,6 @@ mutable struct FitOpt
     R2s_acc::Float64
     optim::Bool
     optim_phaser::Bool
-    autodiff::ADTypes.AbstractADType
     balance::Int
     rapid_balance::Bool
     μ_tikh::Float64
@@ -186,7 +184,6 @@ function fitOpt(ϕ_scale = 1.0)
     R2s_acc = 1.e-4
     optim = true
     optim_phaser = true
-    autodiff = ADTypes.AutoForwardDiff()
     balance = 3
     rapid_balance = true
     μ_tikh = 1.e-6
@@ -200,7 +197,7 @@ function fitOpt(ϕ_scale = 1.0)
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
     accel = :mt
-    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, optim, optim_phaser, autodiff, 
+    FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, optim, optim_phaser, 
             balance, rapid_balance, μ_tikh, K, multi_scale,
             os_fac, redundancy, subsampling, 
             optim_balance, local_fit, 
