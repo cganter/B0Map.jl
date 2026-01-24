@@ -19,7 +19,18 @@ See the [documentation](https://cganter.github.io/B0Map.jl/stable/) for more det
 
 ## Installation
 
-The package is not registered yet. Until then, just clone it and add it to your load path.
+The package can be installed with the Julia package manager.
+
+In the Julia REPL, either issue the commands
+
+```julia
+julia> import Pkg; Pkg.add("B0Map")
+```
+or type `]` to enter the Pkg REPL mode and run
+
+```
+pkg> add B0Map
+```
 
 ## Contributing
 
