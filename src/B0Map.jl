@@ -8,6 +8,6 @@ include("GREMultiEchoWF.jl")
 include("FitTools.jl")
 include("LocalFit.jl")
 # PHASER
-#include("phaser.jl")
-#include("BFourierLin.jl")
+include("phaser.jl")
+include("BFourierLin.jl")
 end

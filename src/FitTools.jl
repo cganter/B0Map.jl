@@ -114,15 +114,15 @@ Data structure holding the fit parameters.
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
 - `balance`: Max. number of data-based balancing
-- `rapid_balance`: if true, `R2s = 0` will be assumed during balancing
+- `rapid_balance`: if true, a subset of `S` is used for balancing
 - `μ_tikh::Float`: (Small) Tikhonov regularization parameter
 - `K::Vector{Int}`: Fourier Kernel size
-- `multi_scale::Bool`: if `true`, gradient based fitting will start with smooth kernel
 - `os_fac::Vector{Float64}`: oversampling factor
 - `redundancy::Float64`: 
 - `subsampling::Symbol`: subsampling strategy (`:fibonacci` or `:random`)
 - `optim_balance::Bool`: Optimization during balancing of local and gradient fit
 - `local_fit::Bool`: Perform a final local fit, based upon PHASER.
+- `show_warnings::Bool`: option for `Optim.jl` (e.g. to suppress `NaN` warnings)
 ## General
 - `n_chunks::Int`: Number of chunks to profit from multi-threaded execution.
 - `accel::Symbol`: Which acceleration technique should be used. Supported values are `:mt` (multi-threading). (`:cuda` not implemented yet)
@@ -142,7 +142,6 @@ mutable struct FitOpt
     rapid_balance::Bool
     μ_tikh::Float64
     K::Vector{Int}
-    multi_scale::Bool
     os_fac::Vector{Float64}
     redundancy::Float64
     subsampling::Symbol
@@ -151,6 +150,7 @@ mutable struct FitOpt
     n_chunks::Int
     rng::MersenneTwister
     accel::Symbol
+    show_warnings::Bool
 end
 
 """
@@ -188,7 +188,6 @@ function fitOpt(ϕ_scale = 1.0)
     rapid_balance = true
     μ_tikh = 1.e-6
     K = []
-    multi_scale = false
     os_fac = [1.3]
     redundancy = Inf
     subsampling = :fibonacci
@@ -197,11 +196,12 @@ function fitOpt(ϕ_scale = 1.0)
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
     accel = :mt
+    show_warnings = false
     FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, optim, optim_phaser, 
-            balance, rapid_balance, μ_tikh, K, multi_scale,
+            balance, rapid_balance, μ_tikh, K, 
             os_fac, redundancy, subsampling, 
             optim_balance, local_fit, 
-            n_chunks, rng, accel)
+            n_chunks, rng, accel, show_warnings)
 end
 
 """
