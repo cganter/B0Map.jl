@@ -113,6 +113,7 @@ Data structure holding the fit parameters.
 - `optim::Bool`: Nonlinear optimiztion in addition to GSS? (Requires gradients to be implemented for the GRE model.)
 ## PHASER only
 - `optim_phaser::Bool`: How to treat initial search in PHASER? (cf. `optim` for details)
+- `global_shift::Symbol`: How to shift global phase (`:median` or `:mean`)
 - `balance`: Max. number of data-based balancing
 - `rapid_balance`: if true, a subset of `S` is used for balancing
 - `μ_tikh::Float`: (Small) Tikhonov regularization parameter
@@ -138,6 +139,7 @@ mutable struct FitOpt
     R2s_acc::Float64
     optim::Bool
     optim_phaser::Bool
+    global_shift::Symbol
     balance::Int
     rapid_balance::Bool
     μ_tikh::Float64
@@ -184,6 +186,7 @@ function fitOpt(ϕ_scale = 1.0)
     R2s_acc = 1.e-4
     optim = true
     optim_phaser = true
+    global_shift = :mean
     balance = 3
     rapid_balance = true
     μ_tikh = 1.e-6
@@ -198,7 +201,7 @@ function fitOpt(ϕ_scale = 1.0)
     accel = :mt
     show_warnings = false
     FitOpt(n_ϕ, ϕ_rngs, Δϕ2, R2s_rng, ϕ_acc, R2s_acc, optim, optim_phaser, 
-            balance, rapid_balance, μ_tikh, K, 
+            global_shift, balance, rapid_balance, μ_tikh, K, 
             os_fac, redundancy, subsampling, 
             optim_balance, local_fit, 
             n_chunks, rng, accel, show_warnings)

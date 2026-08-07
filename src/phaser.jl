@@ -168,7 +168,7 @@ function phaser!(Φ_ML, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::Ti
         # gradient-based estimate
         # ======================================================================
 
-        gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, bs, info, to)
+        gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, fitopt.global_shift, bs, info, to)
 
         # ======================================================================
         # PHASER loop
@@ -461,7 +461,7 @@ function remove_local_outliers!(T, S, Φ, info, to)
 end
 
 """
-    gradient_based_estimate!(ϕ, Tj, S, R, ∇Φ, Φ, μ, bs, info, to)
+    gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, global_shift, bs, info, to)
 
 Calculate gradient-based estimate.
 
@@ -469,7 +469,7 @@ Calculate gradient-based estimate.
 
 Auxiliary routine
 """
-function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, bs, info, to)
+function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, global_shift, bs, info, to)
     @timeit to "gradient-based estimate" begin
         print("Gradient-based estimate ... ")
 
@@ -490,11 +490,11 @@ function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_M
         sol = LinearSolve.solve(prob)
         c = sol.u
 
-        # calculate phase map with median limited to (-π, π]
+        # calculate phase map with median/mean limited to (-π, π]
         push!(ϕ, zeros(size(R)))
         ϕ[end][R] .= @views phase_map(bs, c, to)[R]
 
-        calc_phase_offset!(ϕ[end], Φ_ML, S, R)
+        calc_phase_offset!(ϕ[end], Φ_ML, S, R, global_shift)
 
         # improve masks
         push!(Φ, map_2π(Φ_ML - ϕ[end]))
@@ -519,6 +519,8 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Φ, ∇Φ, Φ_ML, ∇Φ
     @timeit to "balanced estimate" begin
         print("balancing ... ")
 
+        @assert fitopt.global_shift ∈ (:median, :mean)
+        
         @timeit to "prep matrices" begin
             # MPI estimate
             BtB = calc_BtB(bs, T[end], to)
@@ -573,8 +575,12 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Φ, ∇Φ, Φ_ML, ∇Φ
 
         ϕ[end][R] .= @views fitpar.ϕ[R]
 
-        # make sure that the phase median over S lies within (-π, π]
-        median_shift!(ϕ[end], R)
+        # make sure that the phase median/mean over S lies within (-π, π]
+        if fitopt.global_shift == :median
+            median_shift!(ϕ[end], R)
+        else
+            mean_shift!(ϕ[end], R)
+        end
 
         # improve masks
         push!(Φ, map_2π(Φ_ML - ϕ[end]))
@@ -587,30 +593,36 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Φ, ∇Φ, Φ_ML, ∇Φ
 end
 
 """
-    calc_phase_offset!(ϕ, Φ, S, R)
+    calc_phase_offset!(ϕ, Φ, S, R, global_shift)
 
 Shift `ϕ` globally such that optimal consistency with the given ML estimate `Φ`
-on `S` is obtained and the median on `R` lies in the interval `[-π, π)`
+on `S` is obtained and the median/mean on `R` lies in the interval `[-π, π)`
 
 # Remark
 
 Auxiliary routine
 """
-function calc_phase_offset!(ϕ, Φ, S, R)
+function calc_phase_offset!(ϕ, Φ, S, R, global_shift)
+    @assert global_shift ∈ (:median, :mean)
+
     # coefficient b
     b = @views angle(sum(exp.(im .* (Φ[S] .- ϕ[S]))))
 
-    # calculate the median of ϕ over S
-    ϕ_med = @views median(ϕ[R]) + b
+    # calculate the median/mean of ϕ over S
+    if global_shift == :median
+        ϕ_me = @views median(ϕ[R]) + b
+    else
+        ϕ_me = @views mean(ϕ[R]) + b
+    end
 
-    # limit the median phase to [-π,π)
-    while ϕ_med >= π
-        ϕ_med -= 2π
+    # limit the median/mean phase to [-π,π)
+    while ϕ_me >= π
+        ϕ_me -= 2π
         b -= 2π
     end
 
-    while ϕ_med < -π
-        ϕ_med += 2π
+    while ϕ_me < -π
+        ϕ_me += 2π
         b += 2π
     end
 
@@ -643,6 +655,38 @@ function median_shift!(ϕ, R)
 
     while ϕ_med < -π
         ϕ_med += 2π
+        b += 2π
+    end
+
+    # add offset to ϕ
+    @. ϕ[R] += b
+
+    nothing
+end
+
+"""
+    mean_shift!(ϕ, R)
+
+Shift phase `ϕ` by multiples of `2π`, such that the mean over `R` lies in the 
+interval `[-π, π)`.
+
+# Remark
+
+Auxiliary routine
+"""
+function mean_shift!(ϕ, R)
+    # calculate the mean of ϕ over R
+    ϕ_mea = @views mean(ϕ[R])
+    b = 0.0
+
+    # limit the mean phase to [-π,π)
+    while ϕ_mea >= π
+        ϕ_mea -= 2π
+        b -= 2π
+    end
+
+    while ϕ_mea < -π
+        ϕ_mea += 2π
         b += 2π
     end
 
