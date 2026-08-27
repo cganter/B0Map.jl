@@ -1,9 +1,7 @@
-using Random, FFTW
+using Random, FFTW, LinearAlgebra
 
 import VP4Optim as VP
 import B0Map as BM
-
-include("test_tools.jl")
 
 Nρ_orig = (20, 20, 20)
 nd = length(Nρ_orig)
@@ -25,10 +23,10 @@ S_io = :in
 n_chunks = Threads.nthreads()
 rng = MersenneTwister(42)
 
-S_data = create_sinc_map(trues(Nρ_orig...), S_nSinc, S_zc, S_rng;
+S_data = BM.create_sinc_map(trues(Nρ_orig...), S_nSinc, S_zc, S_rng;
     n_chunks=n_chunks, rng=rng)
 
-S = create_msk(S_data, S_holes, S_io)
+S = BM.create_msk(S_data, S_holes, S_io)
 noS = (!).(S)
 
 ciN = CartesianIndices(S)

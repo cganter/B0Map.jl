@@ -1,6 +1,5 @@
 using Random, LinearAlgebra, ChunkSplitters, Statistics
 import VP4Optim as VP
-import B0Map as BM
 
 mutable struct SimPhaPar
     # GRE acquisition parameters
@@ -33,6 +32,9 @@ mutable struct SimPhaPar
     f_rng::Vector{Float64} # PHASER
     f_rng_pha::Vector{Float64} # phantom
     coils_rng::Vector{Float64}
+    # pattern
+    R2s_per::Vector{Float64}
+    f_per::Vector{Float64}
     # number of sincs 
     S_nSinc::Int
     ϕ_nSinc::Int
@@ -43,7 +45,6 @@ mutable struct SimPhaPar
     S_zc::Float64
     ϕ_zc::Float64
     R2s_zc::Float64
-    f_zc::Float64
     coils_zc::Float64
     # fraction of voids in ROI
     S_holes::Float64
@@ -51,8 +52,8 @@ mutable struct SimPhaPar
     S_io::Symbol
     # project phase to smooth subspace
     ϕ_proj::Bool
-    # phase median over ROI (abs(ϕ_med) < π)
-    ϕ_med::Float64
+    # phase mean over ROI (abs(ϕ_mean) < π)
+    ϕ_mean::Float64
     # PHASER settings
     redundancy::Float64
     subsampling::Symbol
@@ -97,6 +98,9 @@ function SimPhaPar()
     f_rng = [0.0, 1.0] # PHASER
     f_rng_pha = Float64[] # phantom
     coils_rng = [1e-3, 1.0]
+    # pattern
+    R2s_per = Float64[]
+    f_per = Float64[]
     # number of sincs 
     S_nSinc = 3
     ϕ_nSinc = 5
@@ -107,7 +111,6 @@ function SimPhaPar()
     S_zc = 2.0
     ϕ_zc = 2.0
     R2s_zc = 2.0
-    f_zc = 2.0
     coils_zc = 2.0
     # fraction of voids in ROI
     S_holes = 0.7
@@ -115,8 +118,8 @@ function SimPhaPar()
     S_io = :out
     # project phase to smooth subspace
     ϕ_proj = true
-    # phase median over ROI (abs(ϕ_med) < π)
-    ϕ_med = 0.0
+    # phase mean over ROI (abs(ϕ_mean) < π)
+    ϕ_mean = 0.0
     # PHASER settings
     redundancy = Inf
     subsampling = :fibonacci
@@ -124,21 +127,22 @@ function SimPhaPar()
     local_fit = true
     optim = true
     optim_phaser = true
-    μ_tikh = 100eps()
+    μ_tikh = 1.e-6
     # miscellaneous settings
     n_chunks = 8Threads.nthreads()
     rng = MersenneTwister()
 
     SimPhaPar(
         TEs, B0, precession, cov_mat, add_noise,
-        Nρ, K, K_pha, os_fac, os_fac_pha, 
+        Nρ, K, K_pha, os_fac, os_fac_pha,
         ppm_fat, ampl_fat, ppm_fat_pha, ampl_fat_pha,
         S_rng, freq_rng, ϕ_rng, R2s_rng, R2s_rng_pha, f_rng, f_rng_pha, coils_rng,
+        R2s_per, f_per,
         S_nSinc, ϕ_nSinc, R2s_nSinc, f_nSinc, coils_nSinc,
-        S_zc, ϕ_zc, R2s_zc, f_zc, coils_zc,
+        S_zc, ϕ_zc, R2s_zc, coils_zc,
         S_holes, S_io,
-        ϕ_proj, ϕ_med,
-        redundancy, subsampling, balance, 
+        ϕ_proj, ϕ_mean,
+        redundancy, subsampling, balance,
         local_fit, optim, optim_phaser, μ_tikh, n_chunks, rng
     )
 end
@@ -212,8 +216,8 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
     # set phase range, if necessary
     if isempty(spp.ϕ_rng)
         @assert !isempty(spp.freq_rng)
-        ΔTE = mean(spp.TEs[2:end] - spp.TEs[1:end-1])
-        spp.ϕ_rng = 2π * spp.freq_rng / ΔTE
+        ΔTE = mean(spp.TEs[2:end] - spp.TEs[1:(end-1)])
+        spp.ϕ_rng = 2π * spp.freq_rng * ΔTE
     end
 
     # set unspecified parameters, if necessary
@@ -224,7 +228,7 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
     ampl_fat_pha = isempty(spp.ampl_fat_pha) ? spp.ampl_fat : spp.ampl_fat_pha
     R2s_rng_pha = isempty(spp.R2s_rng_pha) ? spp.R2s_rng : spp.R2s_rng_pha
     f_rng_pha = isempty(spp.f_rng_pha) ? spp.f_rng : spp.f_rng_pha
-    
+
     # ------------ ROI ------------ 
 
     S_data = create_sinc_map(trues(spp.Nρ...), spp.S_nSinc, spp.S_zc, spp.S_rng;
@@ -245,26 +249,56 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
     ϕ = create_sinc_map(S, spp.ϕ_nSinc, spp.ϕ_zc, spp.ϕ_rng;
         n_chunks=spp.n_chunks, rng=spp.rng)
 
+    ϕ_K = deepcopy(ϕ)
+    bs_K = fourier_lin(spp.Nρ, spp.K; os_fac=os_fac_pha)
+    smooth_projection!(ϕ_K, S, bs_K; μ_tikh=spp.μ_tikh)
+
     if spp.ϕ_proj
-        bs_pha = BM.fourier_lin(spp.Nρ, K_pha; os_fac=os_fac_pha)
-        BM.smooth_projection!(ϕ, S, bs_pha; μ_tikh=spp.μ_tikh)
+        bs_pha = fourier_lin(spp.Nρ, K_pha; os_fac=os_fac_pha)
+        smooth_projection!(ϕ, S, bs_pha; μ_tikh=spp.μ_tikh)
     end
 
-    ϕ[S] .+= @views spp.ϕ_med - median(ϕ[S])
+    ϕ_shift = @views spp.ϕ_mean - mean(ϕ[S])
+
+    ϕ[S] .+= ϕ_shift
+    ϕ_K[S] .+= ϕ_shift
 
     ϕ[noS] .= NaN
 
+    ga = 1 - sqrt(5)
+    sz_S = size(S)
+
     # ------------ R2s ------------ 
 
-    R2s = create_sinc_map(S, spp.R2s_nSinc, spp.R2s_zc, R2s_rng_pha;
-        n_chunks=spp.n_chunks, rng=spp.rng)
+    xs = 0
+
+    for i in eachindex(sz_S)
+        ph = [1:sz_S[i];] .* (2π * ga / spp.R2s_per[i])
+        xs = xs .+ reshape(cos.(ph), ones(Int, i-1)..., sz_S[i])
+    end
+
+    xs = 0.5(real.(xs) .+ ndims(xs)) / length(sz_S)
+    R2s = xs .* R2s_rng_pha[1] .+ (1 .- xs) .* R2s_rng_pha[2]
+
+#    R2s = create_sinc_map(S, spp.R2s_nSinc, spp.R2s_zc, R2s_rng_pha;
+#        n_chunks=spp.n_chunks, rng=spp.rng)
 
     R2s[noS] .= NaN
 
     # ------------ fat fraction ------------ 
 
-    f = create_sinc_map(S, spp.f_nSinc, spp.f_zc, f_rng_pha;
-        n_chunks=spp.n_chunks, rng=spp.rng)
+#    f = create_sinc_map(S, spp.f_nSinc, spp.f_zc, f_rng_pha;
+#        n_chunks=spp.n_chunks, rng=spp.rng)
+
+    xs = 0
+
+    for i in eachindex(sz_S)
+        ph = [1:sz_S[i];] .* (2π * ga / spp.f_per[i])
+        xs = xs .+ reshape(cos.(ph), ones(Int, i-1)..., sz_S[i])
+    end
+
+    xs = 0.5(real.(xs) .+ ndims(xs)) / length(sz_S)
+    f = xs .* f_rng_pha[1] .+ (1 .- xs) .* f_rng_pha[2]
 
     f[noS] .= NaN
 
@@ -295,7 +329,7 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
     data = zeros(ComplexF64, spp.Nρ..., nTE, n_coils)
 
     # GRE parameters
-    grePar = VP.modpar(BM.GREMultiEchoWF;
+    grePar = VP.modpar(GREMultiEchoWF;
         ts=spp.TEs,
         B0=spp.B0,
         ppm_fat=ppm_fat_pha,
@@ -310,7 +344,7 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
     gre = VP.create_model(grePar)
 
     # create channels
-    ch_gre = Channel{BM.GREMultiEchoWF}(Threads.nthreads())
+    ch_gre = Channel{GREMultiEchoWF}(Threads.nthreads())
 
     for _ in 1:Threads.nthreads()
         put!(ch_gre, deepcopy(gre))
@@ -338,9 +372,14 @@ function create_wf_phantom_and_data(spp::SimPhaPar)
 
     # ------------ return everything ------------
 
-    (; data, S, noS, ϕ, R2s, f, coils, perfect_data)
+    (; data, S, noS, ϕ, ϕ_K, R2s, f, coils, perfect_data)
 end
 
+"""
+    create_phantom_data_chunk(gre, ϕ, R2s, f, coils, data, cis_chunk)
+
+TBW
+"""
 function create_phantom_data_chunk(gre, ϕ, R2s, f, coils, data, cis_chunk)
     for ci in cis_chunk
         VP.x!(gre, [ϕ[ci], R2s[ci], f[ci]])
@@ -348,6 +387,11 @@ function create_phantom_data_chunk(gre, ϕ, R2s, f, coils, data, cis_chunk)
     end
 end
 
+"""
+    simulate_phantom(spp::SimPhaPar)
+
+TBW
+"""
 function simulate_phantom(spp::SimPhaPar)
     # ------------ generate phantom ------------
 
@@ -356,7 +400,7 @@ function simulate_phantom(spp::SimPhaPar)
     # ------------ PHASER ------------
 
     # GRE parameters
-    grePar = VP.modpar(BM.GREMultiEchoWF;
+    grePar = VP.modpar(GREMultiEchoWF;
         ts=spp.TEs,
         B0=spp.B0,
         ppm_fat=spp.ppm_fat,
@@ -366,10 +410,11 @@ function simulate_phantom(spp::SimPhaPar)
         cov_mat=spp.cov_mat)
 
     # fit parameters
-    fitpar = BM.fitPar(grePar, deepcopy(phantom.data), deepcopy(phantom.S))
+    fitpar_nn = fitPar(grePar, deepcopy(phantom.perfect_data), deepcopy(phantom.S))
+    fitpar = fitPar(grePar, deepcopy(phantom.data), deepcopy(phantom.S))
 
     # fit options
-    fitopt = BM.fitOpt()
+    fitopt = fitOpt()
     fitopt.K = spp.K
     fitopt.R2s_rng = spp.R2s_rng
     fitopt.redundancy = spp.redundancy
@@ -383,17 +428,20 @@ function simulate_phantom(spp::SimPhaPar)
     fitopt.rng = spp.rng
 
     # smooth subspace
-    bs = BM.fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
+    bs = fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
 
     # apply PHASER
-    bm = BM.B0map!(fitpar, fitopt)    
+    bm_nn = B0map!(fitpar_nn, fitopt)
+    bm = B0map!(fitpar, fitopt)
 
     # ------------ preparing results ------------
 
+    PH_nn = bm_nn.PH
+    to_nn = bm_nn.to
     PH = bm.PH
     to = bm.to
 
     # ------------ return everything ------------
 
-    (; phantom, fitpar, fitopt, bs, PH, to, bm)
+    (; phantom, fitpar_nn, fitpar, fitopt, bs, PH_nn, PH, to_nn, to, bm_nn, bm)
 end

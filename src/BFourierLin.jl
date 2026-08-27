@@ -384,7 +384,7 @@ function calc_∇Btx(bf::BFourierLin, Sj::AbstractVector, x::AbstractVector, to:
 end
 
 """
-    phase_map(bf::BFourierLin, c::Vector)
+    phase_map(bf::BFourierLin, c::AbstractVector, to::TimerOutput=TimerOutput())
 
 Calculates and returns the regularized and real valued phase map `Bρκ * c` 
 for the supplied coefficients `c`, assuming the global offset `b` to be zero.

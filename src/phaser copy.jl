@@ -94,8 +94,8 @@ function B0map!(fitpar::FitPar, fitopt::FitOpt)
 
             local_fit!(fitpar_ML, fitopt_ML)
 
-            Φ, R2s_ML = fitpar_ML.ϕ, fitpar_ML.R2s
-            Φ[noS] .= NaN
+            Φ_ML, R2s_ML = fitpar_ML.ϕ, fitpar_ML.R2s
+            Φ_ML[noS] .= NaN
             R2s_ML[noS] .= NaN
 
             println("done.")
@@ -107,7 +107,7 @@ function B0map!(fitpar::FitPar, fitopt::FitOpt)
 
         println("PHASER Begin ...")
 
-        PH = phaser!(Φ, S, Sj, S_pure, R, fitpar, fitopt, bs, to)
+        PH = phaser!(Φ_ML, S, Sj, S_pure, R, fitpar, fitopt, bs, to)
 
         fitpar.ϕ[R] .= @views PH.ϕ[end][R]
 
@@ -142,15 +142,15 @@ function B0map!(fitpar::FitPar, fitopt::FitOpt)
     end
 
     # return results
-    (; to, PH, Φ, R2s_ML, ϕ_loc, R2s_loc, S, Sj, R, bs)
+    (; to, PH, Φ_ML, R2s_ML, ϕ_loc, R2s_loc, S, Sj, R, bs)
 end
 
 """
-    phaser!(Φ, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutput) where {N}
+    phaser!(Φ_ML, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutput) where {N}
 
 Actual implementation of PHASER
 """
-function phaser!(Φ, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutput) where {N}
+function phaser!(Φ_ML, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::TimerOutput) where {N}
 
     @timeit to "phaser!" begin
         # ======================================================================
@@ -160,15 +160,15 @@ function phaser!(Φ, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::Timer
         @assert ndims(S) == N
         info = Dict()
         T, Tj = [S], Vector{typeof(S)}[]
-        ∇Φ = map(map_2π, ∇j_(Φ, Sj))
-        ϕ, Δ, ∇Δ = typeof(Φ)[], typeof(Φ)[], typeof(∇Φ)[]
-        remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
+        ∇Φ_ML = map(map_2π, ∇j_(Φ_ML, Sj))
+        ϕ, Φ, ∇Φ = typeof(Φ_ML)[], typeof(Φ_ML)[], typeof(∇Φ_ML)[]
+        remove_gradient_outliers!(Tj, Sj, S, ∇Φ_ML, info, to)
 
         # ======================================================================
         # gradient-based estimate
         # ======================================================================
 
-        gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Δ, ∇Δ, Φ, ∇Φ, fitopt.μ_tikh, fitopt.global_shift, bs, info, to)
+        gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitopt.μ_tikh, fitopt.global_shift, bs, info, to)
 
         # ======================================================================
         # PHASER loop
@@ -179,7 +179,7 @@ function phaser!(Φ, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::Timer
         while i_data <= fitopt.balance
             println("data: ", i_data, "/", fitopt.balance)
 
-            balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, fitopt, bs, info, to)
+            balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs, info, to)
             n_bal += 1
 
             masks_changed(T, Tj, i_data) || break
@@ -191,7 +191,7 @@ function phaser!(Φ, S, Sj, S_pure, R, fitpar, fitopt, bs::BSmooth{N}, to::Timer
         # return results
         # ======================================================================
 
-        (; ϕ, Φ, ∇Φ, Δ, ∇Δ, T, Tj, S, Sj, R, n_bal, info)
+        (; ϕ, Φ_ML, ∇Φ_ML, Φ, ∇Φ, T, Tj, S, Sj, R, n_bal, info)
     end
 end
 
@@ -335,11 +335,11 @@ function masks_changed(T, Tj, n)
 end
 
 """
-    remove_gradient_outliers!(Tj, ∇Δ, msk, info, to)
+    remove_gradient_outliers!(Tj, ∇Φ, msk, info, to)
 
 TBW
 """
-function remove_gradient_outliers!(Tj, Sj, S, ∇Δ, info, to)
+function remove_gradient_outliers!(Tj, Sj, S, ∇Φ, info, to)
     @timeit to "remove gradient outliers" begin
         haskey(info, :outliers) || (info[:outliers] = Dict())
 
@@ -347,8 +347,8 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Δ, info, to)
         ig = info[:outliers][:gradient]
 
         # first we determine the maximally allowed u in each direction        
-        a∇Δ_hist = Histogram[]
-        a∇Δ_max = Float64[]
+        a∇Φ_hist = Histogram[]
+        a∇Φ_max = Float64[]
         cntrs = Vector{Float64}[]
         wghts = Vector{Float64}[]
 
@@ -357,14 +357,14 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Δ, info, to)
             # https://doi.org/10.2307/2288074
             nbins = ceil(Int, (2sum(Sj[j]))^(1 / 3))
             # store differences
-            a∇Δ = abs.(∇Δ[j][Sj[j]])
+            a∇Φ = abs.(∇Φ[j][Sj[j]])
             # boundaries of bin intervals
-            edges = @views range(0.0, max(a∇Δ...), nbins + 1)
+            edges = @views range(0.0, max(a∇Φ...), nbins + 1)
             push!(cntrs, 0.5(edges[1:end-1] + edges[2:end]))
             # generate the histogram curve based upon the bins defined above
-            push!(a∇Δ_hist, fit(Histogram, a∇Δ, edges))
+            push!(a∇Φ_hist, fit(Histogram, a∇Φ, edges))
             # in addition to the Rice conditition, we further smooth the histogram
-            push!(wghts, savitzky_golay(a∇Δ_hist[end].weights, 3, 1).y)
+            push!(wghts, savitzky_golay(a∇Φ_hist[end].weights, 3, 1).y)
             # search for the largest peak
             iemin = findmax(wghts[end])[2]
             # starting from zero, include the right flank until local minimum occurs
@@ -375,28 +375,28 @@ function remove_gradient_outliers!(Tj, Sj, S, ∇Δ, info, to)
                 fimi_test += 1
             end
             # define cutoff value
-            push!(a∇Δ_max, 0.5(edges[fimi-1] + edges[fimi]))
+            push!(a∇Φ_max, 0.5(edges[fimi-1] + edges[fimi]))
         end
 
-        haskey(ig, :a∇Δ_hist) || (ig[:a∇Δ_hist] = typeof(a∇Δ_hist)[])
-        push!(ig[:a∇Δ_hist], a∇Δ_hist)
+        haskey(ig, :a∇Φ_hist) || (ig[:a∇Φ_hist] = typeof(a∇Φ_hist)[])
+        push!(ig[:a∇Φ_hist], a∇Φ_hist)
         haskey(ig, :centers) || (ig[:centers] = typeof(cntrs)[])
         push!(ig[:centers], cntrs)
         haskey(ig, :weights) || (ig[:weights] = typeof(wghts)[])
         push!(ig[:weights], wghts)
-        haskey(ig, :a∇Δ_max) || (ig[:a∇Δ_max] = typeof(a∇Δ_max)[])
-        push!(ig[:a∇Δ_max], a∇Δ_max)
+        haskey(ig, :a∇Φ_max) || (ig[:a∇Φ_max] = typeof(a∇Φ_max)[])
+        push!(ig[:a∇Φ_max], a∇Φ_max)
 
         push!(Tj, deepcopy(Sj))
 
         for j in 1:ndims(S)
-            @. Tj[end][j][Sj[j]] = @views abs(∇Δ[j][Sj[j]]) < a∇Δ_max[j]
+            @. Tj[end][j][Sj[j]] = @views abs(∇Φ[j][Sj[j]]) < a∇Φ_max[j]
         end
     end
 end
 
 """
-    remove_local_outliers!(T, Δ, msk, info, to)
+    remove_local_outliers!(T, Φ, msk, info, to)
 
 Remove local outliers.
 
@@ -404,7 +404,7 @@ Remove local outliers.
 
 Auxiliary routine
 """
-function remove_local_outliers!(T, S, Δ, info, to)
+function remove_local_outliers!(T, S, Φ, info, to)
     @timeit to "remove local outliers" begin
         haskey(info, :outliers) || (info[:outliers] = Dict())
 
@@ -415,12 +415,12 @@ function remove_local_outliers!(T, S, Δ, info, to)
         # https://doi.org/10.2307/2288074
         nbins = ceil(Int, (2sum(S))^(1 / 3))
         # boundaries of bin intervals
-        edges = @views range(min(Δ[S]...), max(Δ[S]...), nbins + 1)
+        edges = @views range(min(Φ[S]...), max(Φ[S]...), nbins + 1)
         cntrs = 0.5(edges[1:end-1] + edges[2:end])
         # generate the histogram curve based upon the bins defined above
-        Δ_hist = @views fit(Histogram, Δ[S], edges)
+        Φ_hist = @views fit(Histogram, Φ[S], edges)
         # take the weights and apply an additional smoothing filter
-        wghts = savitzky_golay(Δ_hist.weights, 3, 1).y
+        wghts = savitzky_golay(Φ_hist.weights, 3, 1).y
         # we assume the largest peak to correspond to the correct solution
         ip = argmax(wghts)
         # now we go down on both flanks of the peak until the next local minimum is reached
@@ -439,29 +439,29 @@ function remove_local_outliers!(T, S, Δ, info, to)
             ip_min = ip_min_test
             ip_min_test -= 1
         end
-        Δ_min = 0.5(edges[ip_min] + edges[ip_min+1])
-        Δ_max = 0.5(edges[ip_max] + edges[ip_max-1])
+        Φ_min = 0.5(edges[ip_min] + edges[ip_min+1])
+        Φ_max = 0.5(edges[ip_max] + edges[ip_max-1])
 
         push!(T, deepcopy(S))
 
         # these local minima then define the locations to keep in S
-        @. T[end][S] = @views Δ_min <= Δ[S] <= Δ_max
+        @. T[end][S] = @views Φ_min <= Φ[S] <= Φ_max
 
-        haskey(ig, :Δ_hist) || (ig[:Δ_hist] = typeof(Δ_hist)[])
-        push!(ig[:Δ_hist], Δ_hist)
+        haskey(ig, :Φ_hist) || (ig[:Φ_hist] = typeof(Φ_hist)[])
+        push!(ig[:Φ_hist], Φ_hist)
         haskey(ig, :centers) || (ig[:centers] = typeof(cntrs)[])
         push!(ig[:centers], cntrs)
         haskey(ig, :weights) || (ig[:weights] = typeof(wghts)[])
         push!(ig[:weights], wghts)
-        haskey(ig, :Δ_min) || (ig[:Δ_min] = typeof(Δ_min)[])
-        push!(ig[:Δ_min], Δ_min)
-        haskey(ig, :Δ_max) || (ig[:Δ_max] = typeof(Δ_max)[])
-        push!(ig[:Δ_max], Δ_max)
+        haskey(ig, :Φ_min) || (ig[:Φ_min] = typeof(Φ_min)[])
+        push!(ig[:Φ_min], Φ_min)
+        haskey(ig, :Φ_max) || (ig[:Φ_max] = typeof(Φ_max)[])
+        push!(ig[:Φ_max], Φ_max)
     end
 end
 
 """
-    gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Δ, ∇Δ, Φ, ∇Φ, μ_tikh, global_shift, bs, info, to)
+    gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, global_shift, bs, info, to)
 
 Calculate gradient-based estimate.
 
@@ -469,24 +469,24 @@ Calculate gradient-based estimate.
 
 Auxiliary routine
 """
-function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Δ, ∇Δ, Φ, ∇Φ, μ_tikh, global_shift, bs, info, to)
+function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, μ_tikh, global_shift, bs, info, to)
     @timeit to "gradient-based estimate" begin
         print("Gradient-based estimate ... ")
 
         @timeit to "prep matrices" begin
             # MPI estimate
             ∇Bt∇B = calc_∇Bt∇B(bs, Tj[end], to)
-            ∇Bt∇Δ = calc_∇Btx(bs, Tj[end], ∇Φ, to)
+            ∇Bt∇Φ = calc_∇Btx(bs, Tj[end], ∇Φ_ML, to)
         end
 
         haskey(info, :gradient) || (info[:gradient] = Dict())
         ib = info[:gradient]
 
         ib[:∇Bt∇B] = ∇Bt∇B
-        ib[:∇Bt∇Δ] = ∇Bt∇Δ
+        ib[:∇Bt∇Φ] = ∇Bt∇Φ
 
         μ = μ_tikh * max(real.(diag(∇Bt∇B))...)
-        prob = LinearSolve.LinearProblem(∇Bt∇B + μ * I, ∇Bt∇Δ)
+        prob = LinearSolve.LinearProblem(∇Bt∇B + μ * I, ∇Bt∇Φ)
         sol = LinearSolve.solve(prob)
         c = sol.u
 
@@ -494,20 +494,20 @@ function gradient_based_estimate!(ϕ, T, Tj, S, Sj, R, Δ, ∇Δ, Φ, ∇Φ, μ_
         push!(ϕ, zeros(size(R)))
         ϕ[end][R] .= @views phase_map(bs, c, to)[R]
 
-        calc_phase_offset!(ϕ[end], Φ, S, R, global_shift)
+        calc_phase_offset!(ϕ[end], Φ_ML, S, R, global_shift)
 
         # improve masks
-        push!(Δ, map_2π(Φ - ϕ[end]))
-        push!(∇Δ, map(map_2π, ∇j_(Δ[end], Sj)))
+        push!(Φ, map_2π(Φ_ML - ϕ[end]))
+        push!(∇Φ, map(map_2π, ∇j_(Φ[end], Sj)))
         push!(T, S)
-        remove_gradient_outliers!(Tj, Sj, S, ∇Δ[end], info, to)
+        remove_gradient_outliers!(Tj, Sj, S, ∇Φ[end], info, to)
 
         println("done.")
     end
 end
 
 """
-    balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, fitopt, bs::BSmooth{N}, info, to) where {N}
+    balanced_estimate!(ϕ, T, Tj, S, R, Φ, ∇Φ, fitpar, fitopt, bs, info, to)
 
 Calculate balanced estimate.
 
@@ -515,7 +515,7 @@ Calculate balanced estimate.
 
 Auxiliary routine
 """
-function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, fitopt, bs::BSmooth{N}, info, to) where {N}
+function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Φ, ∇Φ, Φ_ML, ∇Φ_ML, fitpar, fitopt, bs::BSmooth{N}, info, to) where {N}
     @timeit to "balanced estimate" begin
         print("balancing ... ")
 
@@ -524,26 +524,27 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, 
         @timeit to "prep matrices" begin
             # MPI estimate
             BtB = calc_BtB(bs, T[end], to)
-            BtΔ = calc_Btx(bs, T[end], Δ[end], to)
+            BtΦ = calc_Btx(bs, T[end], Φ[end], to)
             ∇Bt∇B = calc_∇Bt∇B(bs, Tj[end], to)
-            ∇Bt∇Δ = calc_∇Btx(bs, Tj[end], ∇Δ[end], to)
+            ∇Bt∇Φ = calc_∇Btx(bs, Tj[end], ∇Φ[end], to)
         end
 
         haskey(info, :balanced) || (info[:balanced] = Dict())
         ib = info[:balanced]
 
         haskey(ib, :BtB) || (ib[:BtB] = typeof(BtB)[])
-        haskey(ib, :BtΔ) || (ib[:BtΔ] = typeof(BtΔ)[])
+        haskey(ib, :BtΦ) || (ib[:BtΦ] = typeof(BtΦ)[])
         haskey(ib, :∇Bt∇B) || (ib[:∇Bt∇B] = typeof(∇Bt∇B)[])
-        haskey(ib, :∇Bt∇Δ) || (ib[:∇Bt∇Δ] = typeof(∇Bt∇Δ)[])
+        haskey(ib, :∇Bt∇Φ) || (ib[:∇Bt∇Φ] = typeof(∇Bt∇Φ)[])
 
         push!(ib[:BtB], BtB)
-        push!(ib[:BtΔ], BtΔ)
+        push!(ib[:BtΦ], BtΦ)
         push!(ib[:∇Bt∇B], ∇Bt∇B)
-        push!(ib[:∇Bt∇Δ], ∇Bt∇Δ)
+        push!(ib[:∇Bt∇Φ], ∇Bt∇Φ)
 
         push!(ϕ, zeros(size(R)))
 
+        Φ2 = ∇Φ2 = 0.0
         fitoptλ = deepcopy(fitopt)
 
         fitparλ = fitoptλ.rapid_balance ? fitPar(fitpar.grePar, fitpar.data, S_pure) : fitPar(fitpar.grePar, fitpar.data, S)
@@ -551,7 +552,7 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, 
         set_num_phase_intervals(fitparλ, fitoptλ, 0)
         fitoptλ.R2s_rng = [0.0, 0.0]
 
-        χ2_λ_fun = create_χ2_λ_fun(fitparλ, fitoptλ, bs, BtB, BtΔ, ∇Bt∇B, ∇Bt∇Δ, ϕ, to)
+        χ2_λ_fun = create_χ2_λ_fun(fitparλ, fitoptλ, bs, BtB, BtΦ, ∇Bt∇B, ∇Bt∇Φ, Φ2, ∇Φ2, ϕ, to)
 
         @timeit to "GSS search λ" begin
             λ_opt, χ2_opt, λs, χ2s = GSS(χ2_λ_fun, (0.0, 1.0), 1e-4; show_all=true)
@@ -570,7 +571,7 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, 
         push!(ib[:χ2s], χ2s / sumS)
 
         # take the best match and calculate the solution on R
-        create_χ2_λ_fun(fitpar, fitoptλ, bs, BtB, BtΔ, ∇Bt∇B, ∇Bt∇Δ, ϕ, to)(λ_opt)
+        create_χ2_λ_fun(fitpar, fitoptλ, bs, BtB, BtΦ, ∇Bt∇B, ∇Bt∇Φ, Φ2, ∇Φ2, ϕ, to; calc_ϕ=true)(λ_opt)
 
         ϕ[end][R] .= @views fitpar.ϕ[R]
 
@@ -582,10 +583,10 @@ function balanced_estimate!(ϕ, T, Tj, S, Sj, S_pure, R, Δ, ∇Δ, Φ, fitpar, 
         end
 
         # improve masks
-        push!(Δ, map_2π(Φ - ϕ[end]))
-        push!(∇Δ, map(map_2π, ∇j_(Δ[end], Sj)))
-        remove_local_outliers!(T, S, Δ[end], info, to)
-        remove_gradient_outliers!(Tj, Sj, S, ∇Δ[end], info, to)
+        push!(Φ, map_2π(Φ_ML - ϕ[end]))
+        push!(∇Φ, map(map_2π, ∇j_(Φ[end], Sj)))
+        remove_local_outliers!(T, S, Φ[end], info, to)
+        remove_gradient_outliers!(Tj, Sj, S, ∇Φ[end], info, to)
 
         println("done.")
     end
@@ -594,7 +595,7 @@ end
 """
     calc_phase_offset!(ϕ, Φ, S, R, global_shift)
 
-Shift `ϕ` globally such that optimal consistency with the given ML estimate `Δ`
+Shift `ϕ` globally such that optimal consistency with the given ML estimate `Φ`
 on `S` is obtained and the median/mean on `R` lies in the interval `[-π, π)`
 
 # Remark
@@ -799,11 +800,11 @@ function ∇j_(A::AbstractArray, Sj::AbstractVector)
 end
 
 """
-    create_χ2_λ_fun(fitparλ, fitoptλ, bs, A, a, B, b, ϕ, to)
+    χ2_λ_fun(fitparλ, fitopt, bs, A, a, B, b, ϕ_0, μ_tikh)
 
 TBW
 """
-function create_χ2_λ_fun(fitparλ, fitoptλ, bs, A, a, B, b, ϕ, to)
+function create_χ2_λ_fun(fitparλ, fitoptλ, bs, A, a, B, b, Φ2, ∇Φ2, ϕ, to; calc_ϕ=false)
 
     @timeit to "create_χ2_λ_fun" begin
         λ -> let fitparλ = fitparλ, fitoptλ = fitoptλ, bs = bs,

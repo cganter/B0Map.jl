@@ -10,4 +10,5 @@ include("LocalFit.jl")
 # PHASER
 include("phaser.jl")
 include("BFourierLin.jl")
+include("../test/test_tools.jl")
 end
