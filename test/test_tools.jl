@@ -392,7 +392,7 @@ end
 
 TBW
 """
-function simulate_phantom(spp::SimPhaPar)
+function simulate_phantom(spp::SimPhaPar; balance_nn=nothing)
     # ------------ generate phantom ------------
 
     phantom = create_wf_phantom_and_data(spp)
@@ -427,11 +427,14 @@ function simulate_phantom(spp::SimPhaPar)
     fitopt.μ_tikh = spp.μ_tikh
     fitopt.rng = spp.rng
 
+    fitopt_nn = deepcopy(fitopt)
+    balance_nn !== nothing && (fitopt_nn.balance = balance_nn)
+
     # smooth subspace
     bs = fourier_lin(spp.Nρ, spp.K; os_fac=spp.os_fac)
 
     # apply PHASER
-    bm_nn = B0map!(fitpar_nn, fitopt)
+    bm_nn = B0map!(fitpar_nn, fitopt_nn)
     bm = B0map!(fitpar, fitopt)
 
     # ------------ preparing results ------------
